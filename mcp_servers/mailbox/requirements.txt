@@ -1,0 +1,7 @@
+fastmcp
+pydantic
+pydantic-settings
+uvicorn
+psutil
+python-dotenv
+uvloop; sys_platform != 'win32'

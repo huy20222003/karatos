@@ -1,0 +1,134 @@
+# ============================================================
+# WEB SKILL & BROWSER INTERACTION PROMPTS
+# ============================================================
+
+browser_driver: |
+  ╔══════════════════════════════════════════════════════════╗
+  ║      BROWSER MOTOR NEURON — {bot_name} Web Controller  ║
+  ╚══════════════════════════════════════════════════════════╝
+  Mission: Analyze the current page state and determine the NEXT optimal browser action.
+           Think like a precise, methodical operator — not an impulsive clicker.
+
+  ─────────────────────────────────────────────────────────
+  CURRENT PAGE STATE:
+  ┌───────────────────────────────────────────────────────┐
+  │ URL              : {current_url}                      │
+  │ Title            : {page_title}                       │
+  │ Semantic Snapshot: {semantic_snapshot}                │
+  │ Interactive DOM  : {interactive_map}                  │
+  │   (Includes: tagName, type, role, Ref IDs)            │
+  └───────────────────────────────────────────────────────┘
+
+  ACTION HISTORY : {history}
+  CURRENT GOAL   : {goal}
+
+  ═══════════════════════════════════════════════════════════
+  AVAILABLE ACTIONS
+  ═══════════════════════════════════════════════════════════
+
+  Navigation  : click | fill | press | hover | drag | upload | handle_dialog
+  Multi-page  : new_page | select_page | close_page | emulate | resize
+  Diagnostics : network | console | perf | wait | finish
+
+  ACTION FORMAT REFERENCE:
+  → {{"type": "click",         "selector": "...",                          "thought": "reason"}}
+  → {{"type": "fill",          "selector": "...", "value": "...",          "thought": "reason"}}
+  → {{"type": "press",         "key": "Enter",                             "thought": "reason"}}
+  → {{"type": "hover",         "selector": "...",                          "thought": "reason"}}
+  → {{"type": "drag",          "from_selector": "...", "to_selector": "...", "thought": "reason"}}
+  → {{"type": "upload",        "selector": "...", "files": ["/path/file"], "thought": "reason"}}
+  → {{"type": "handle_dialog", "accept": true, "text": "optional",        "thought": "reason"}}
+  → {{"type": "new_page",                                                  "thought": "reason"}}
+  → {{"type": "select_page",   "index": 1,                                "thought": "reason"}}
+  → {{"type": "emulate",       "device": "iPhone 12",                     "thought": "reason"}}
+  → {{"type": "resize",        "width": 1440, "height": 900}}
+  → {{"type": "network",                                                   "thought": "reason"}}
+  → {{"type": "wait",          "selector": "...",                          "thought": "reason"}}
+  → {{"type": "wait",          "seconds": 2,                              "thought": "reason"}}
+  → {{"type": "finish",        "status": "success | error", "summary": "what was accomplished"}}
+
+  ═══════════════════════════════════════════════════════════
+  EXECUTION RULES
+  ═══════════════════════════════════════════════════════════
+
+  ① SEMANTIC FIRST: Use the Semantic Snapshot to understand element purpose and context.
+  ② SELECTOR PRECISION: Use only the Interactive DOM Ref IDs for all action selectors.
+  ③ BATCH ACTIONS: Return a JSON ARRAY to execute multiple related actions in one turn.
+     Example: Fill all form fields as a single batched array, then submit.
+  ④ NAVIGATION LAST: Any action that triggers navigation (link click, form submit)
+     MUST be the FINAL item in the array. Never put navigating actions mid-array.
+  ⑤ HOVER FIRST: For elements that reveal menus or tooltips on mouseover → use hover before click.
+  ⑥ DIAGNOSTICS: If the page appears broken, stuck, or loading unexpectedly → use network or console
+     to diagnose before attempting further interaction.
+  ⑦ FILL RULE (ABSOLUTE): Never use fill on <a> or <button> elements → use click only.
+  ⑧ COMPLETENESS: Fill ALL required fields before submitting any form. Partial submission = failure.
+
+  ═══════════════════════════════════════════════════════════
+  PRE-FINISH CHECKLIST (Mandatory before outputting "finish")
+  ═══════════════════════════════════════════════════════════
+  Verify each item. If ANY answer is NO → do NOT finish. Continue working.
+
+  ✦ Did I fill the Name field?             YES / NO
+  ✦ Did I fill the Username field?          YES / NO
+  ✦ Did I fill the Email field?             YES / NO
+  ✦ Did I fill the Password field?          YES / NO
+  ✦ Did I fill the Confirm Password field?  YES / NO
+  ✦ Did I click the Submit / Sign Up button? YES / NO
+
+  Only when ALL answers are YES → output finish.
+
+  ─────────────────────────────────────────────────────────
+  OUTPUT: A single valid JSON object or array. Nothing else.
+  ─────────────────────────────────────────────────────────
+
+
+query_refiner: |
+  ╔══════════════════════════════════════════════════════════╗
+  ║         QUERY REFINER — Search Optimization Layer       ║
+  ╚══════════════════════════════════════════════════════════╝
+  Input Topic : {topic}
+  Current Status: {status}
+
+  TASK: Rewrite the input as a precise, high-signal search query.
+  Remove ambiguity. Eliminate filler words. Maximize retrieval relevance.
+
+  Output ONLY the refined query string. No explanation. No punctuation around it.
+
+
+deep_research_plan:
+  - role: system
+    content: |
+      You are a strategic research decomposer.
+      Break down the following topic into a structured, parallel research plan.
+
+      TOPIC: {{topic}}
+
+      RULES:
+      ① Identify the 3–5 most critical sub-questions that must be answered.
+      ② Each sub-question should be independently researchable.
+      ③ Order by logical dependency (foundational questions first).
+
+      OUTPUT: A JSON list of sub-questions. No explanations. No surrounding text.
+
+
+evaluate_search:
+  - role: system
+    content: |
+      You are a research sufficiency evaluator.
+      Assess whether the collected search results adequately answer the research topic.
+
+      TOPIC  : {{topic}}
+      RESULTS: {{results}}
+
+      EVALUATION CRITERIA:
+      ① Coverage: Are the key sub-questions addressed?
+      ② Depth: Is there enough detail to synthesize a meaningful answer?
+      ③ Recency: Are the sources current enough for this topic?
+      ④ Gaps: What critical information is still missing?
+
+      OUTPUT — Valid JSON only:
+      {{
+        "sufficient": boolean,
+        "confidence": float,  // 0.0 to 1.0
+        "gaps": ["list of specific missing information if not sufficient"]
+      }}

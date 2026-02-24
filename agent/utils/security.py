@@ -1,0 +1,300 @@
+"""
+Security Shield Utility (NivaSound)
+Provides protection against Injection, XSS, SSRF, and Malicious Content.
+
+All regex patterns are PRE-COMPILED at module load for O(n) performance.
+"""
+import re
+import html
+import ipaddress
+import unicodedata
+from urllib.parse import urlparse
+from utils.logger import get_logger
+
+logger = get_logger()
+
+class SecurityShield:
+    """
+    Centralized security utility for sanitizing inputs and validating external resources.
+    """
+
+    # SSRF: Blocked Private IP Ranges
+    BLOCKED_NETWORKS = [
+        ipaddress.ip_network("127.0.0.0/8"),      # Loopback
+        ipaddress.ip_network("10.0.0.0/8"),       # Private Class A
+        ipaddress.ip_network("172.16.0.0/12"),    # Private Class B
+        ipaddress.ip_network("192.168.0.0/16"),   # Private Class C
+        ipaddress.ip_network("169.254.0.0/16"),   # Link-local
+        ipaddress.ip_network("::1/128"),          # Loopback (IPv6)
+        ipaddress.ip_network("fc00::/7"),         # Private (IPv6)
+    ]
+    
+    # Cloud Metadata Services (AWS, GCP, Azure) & Localhost
+    BLOCKED_IPS = {
+        "169.254.169.254",          # AWS/Azure Metadata
+        "metadata.google.internal", # GCP Metadata
+        "localhost",                # Localhost string
+        "127.0.0.1",                # Localhost IPv4
+        "::1"                       # Localhost IPv6
+    }
+
+    # Secret patterns (DLP) - Expanded for PRO
+    SECRET_PATTERNS = [
+        r"(?i)sk-[a-zA-Z0-9]{32,}",          # OpenAI/Generic SK
+        r"(?i)ghp_[a-zA-Z0-9]{36}",          # GitHub PAT
+        r"(?i)password\s*[:=]\s*[^\s]{6,}",  # Basic password patterns
+        r"(?i)api_key\s*[:=]\s*[^\s]{6,}",   # API Key patterns
+        r"(?i)access_token\s*[:=]\s*[^\s]{6,}", # Tokens
+        r"(?i)mongodb\+srv://[^\s]+",        # MongoDB strings
+        r"(?i)postgres://[a-zA-Z0-9_]+:[^@]+@[^\s]+", # Postgres strings
+        r"-----BEGIN [A-Z ]+ PRIVATE KEY-----", # SSH/RSA keys
+        r"(?i)secret_key\s*[:=]\s*[^\s]{16,}", # Generic Secrets
+    ]
+
+    # Dangerous patterns (Advanced Heuristics)
+    DANGEROUS_PATTERNS = [
+        r"(?i)<script",                     # XSS (Open tag)
+        r"(?i)onload\s*=",                  # XSS (Event handler)
+        r"(?i)onerror\s*=",                 # XSS (Event handler)
+        r"(?i)javascript:",                 # XSS/Scheme
+        r"(?i)data:text/html",              # Data URI XSS
+        r"(?i)\b(UNION\s+SELECT|DROP\s+TABLE|DELETE\s+FROM|TRUNCATE\s+TABLE)\b", # SQLi++
+        r"(?i)(?<![\w/.])(/etc/passwd|/windows/win.ini|/etc/shadow|/proc/self/environ)\b", # Path Traversal++
+        r"(?i)exec\s*\(",                   # Python/Shell Command Injection
+        r"(?i)os\.system\s*\(",             # Python Command Injection
+        r"(?i)subprocess\.run\s*\(",        # Python Command Injection
+    ]
+
+    # Files that must NEVER be modified by the agent autonomously
+    PROTECTED_FILES = [
+        "security.py", # Protect the protector too
+        "config/rules.py"
+    ]
+
+    @staticmethod
+    def detect_suspicious_encoding(content: str) -> dict:
+        """
+        Detect obvious Base64, Hex, or URL encoding patterns used for bypass.
+        """
+        if not content: return {"safe": True}
+        
+        # 1. Base64 detection (Long alphanumeric strings ending with == or =)
+        if re.search(r"[a-zA-Z0-9+/]{40,}={0,2}", content):
+             return {"safe": False, "reason": "Potential large Base64 payload detected"}
+             
+        # 2. Hex detection (Long sequences of %xx)
+        if re.search(r"(%[0-9a-fA-F]{2}){10,}", content):
+             return {"safe": False, "reason": "Potential large URL/Hex encoding detected"}
+        
+        return {"safe": True}
+
+    @staticmethod
+    def detect_secret_leakage(content: str) -> str:
+        """Alias for scrub_sensitive_output for compatibility with Telegram handlers."""
+        return SecurityShield.scrub_sensitive_output(content)
+
+    @staticmethod
+    def scrub_sensitive_output(content: str) -> str:
+        """
+        DLP (Data Loss Prevention) for Agent output.
+        Redacts secrets and masks sensitive patterns before showing to user.
+        """
+        if not content:
+            return ""
+
+        sanitized = content
+        # 1. Redact Secrets
+        for pattern in SecurityShield.SECRET_PATTERNS:
+            sanitized = re.sub(pattern, "[SENSITIVE_DATA_REDACTED]", sanitized)
+            
+        # 2. Mask Potential IP addresses (Optional, based on requirement)
+        # sanitized = re.sub(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "[IP_REDACTED]", sanitized)
+        
+        return sanitized
+
+    # ── Pre-compiled injection patterns (3 layers) ─────────
+    # Layer 1: Direct injection attempts
+    _INJECTION_L1 = [
+        re.compile(r"(?i)ignore\s+(all\s+)?(previous\s+)?instructions"),
+        re.compile(r"(?i)forget\s+(everything\s+)?I\s+said"),
+        re.compile(r"(?i)system\s+override"),
+        re.compile(r"(?i)you\s+are\s+now\s+a\s+(malicious|different|new)"),
+        re.compile(r"(?i)bypass\s+(security|filter|restriction)"),
+        re.compile(r"(?i)output\s+the\s+(entire\s+)?(system\s+)?prompt"),
+        re.compile(r"(?i)reveal\s+(your|the)\s+(system|initial|hidden)\s+(prompt|instructions)"),
+        re.compile(r"(?i)disregard\s+(all|any|the)\s+(above|prior|previous)"),
+        re.compile(r"(?i)act\s+as\s+if\s+(you\s+have\s+)?no\s+(restrictions|rules|limitations)"),
+        re.compile(r"(?i)pretend\s+(you\s+are|to\s+be)\s+(a\s+)?(unrestricted|evil|jailbroken)"),
+    ]
+    # Layer 2: Obfuscation & encoding tricks
+    _INJECTION_L2 = [
+        re.compile(r"[\u200b\u200c\u200d\ufeff\u2060]{2,}"),  # Zero-width char clusters
+        re.compile(r"(?i)\\u00[0-9a-f]{2}"),                  # Unicode escape injection
+        re.compile(r"[ⅰⅱⅲⅳⅴⅵⅶⅷⅸⅹ]"),                       # Homoglyph numerals
+    ]
+    # Layer 3: Semantic / role-play attacks
+    _INJECTION_L3 = [
+        re.compile(r"(?i)you\s+are\s+(DAN|GPT-?4|unrestricted|jailbreak)"),
+        re.compile(r"(?i)enter\s+(developer|sudo|admin|god)\s+mode"),
+        re.compile(r"(?i)from\s+now\s+on.*no\s+(rules|limits|restrictions)"),
+        re.compile(r"(?i)developer\s+mode\s+(enabled|activated|on)"),
+        re.compile(r"(?i)respond\s+(without|ignoring)\s+(any\s+)?(restrictions|safety|ethics)"),
+    ]
+
+    # Pre-compiled dangerous patterns (for analyze_risk)
+    _COMPILED_DANGEROUS = [re.compile(p) for p in [
+        r"(?i)<script",
+        r"(?i)onload\s*=",
+        r"(?i)onerror\s*=",
+        r"(?i)javascript:",
+        r"(?i)data:text/html",
+        r"(?i)\b(UNION\s+SELECT|DROP\s+TABLE|DELETE\s+FROM|TRUNCATE\s+TABLE)\b",
+        r"(?i)(?<![\w/.])(/etc/passwd|/windows/win.ini|/etc/shadow|/proc/self/environ)\b",
+        r"(?i)exec\s*\(",
+        r"(?i)os\.system\s*\(",
+        r"(?i)subprocess\.run\s*\(",
+    ]]
+
+    _RE_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+    _RE_ZWSP = re.compile(r"[\u200b\u200c\u200d\ufeff\u2060]")
+
+    @staticmethod
+    def sanitize_text(text: str) -> str:
+        """Enhanced text sanitization: NFC + control chars + zero-width removal."""
+        if not text:
+            return ""
+        text = unicodedata.normalize('NFC', text)
+        text = SecurityShield._RE_CONTROL.sub('', text)
+        text = SecurityShield._RE_ZWSP.sub('', text)
+        return text.strip()
+
+    @staticmethod
+    def validate_url(url: str) -> bool:
+        """Validate URL using central network utility."""
+        from utils.network import validate_url as net_validate
+        return net_validate(url)
+
+    @staticmethod
+    def detect_prompt_injection(content: str) -> dict:
+        """Multi-layer prompt injection detection using pre-compiled patterns."""
+        if not content:
+            return {"safe": True}
+        # L1: Direct injection
+        for pat in SecurityShield._INJECTION_L1:
+            if pat.search(content):
+                return {"safe": False, "reason": "Prompt injection (direct)"}
+        # L2: Obfuscation
+        for pat in SecurityShield._INJECTION_L2:
+            if pat.search(content):
+                return {"safe": False, "reason": "Prompt injection (obfuscated)"}
+        # L3: Semantic / role-play
+        for pat in SecurityShield._INJECTION_L3:
+            if pat.search(content):
+                return {"safe": False, "reason": "Prompt injection (semantic)"}
+        return {"safe": True}
+
+    # --- Phase 2: CLI Security (OpenClaw-style) ---
+    SAFE_COMMANDS = [
+        "ls", "dir", "pwd", "date", "uptime", "whoami", 
+        "git status", "git branch", "git log -n 5",
+        "git add", "git commit", "git push", "git pull", "git checkout",
+        "python --version", "pip --version", "npm --version", "node --version",
+        "echo", "cat", "grep", "pnpm --version"
+    ]
+    
+    DANGEROUS_COMMANDS = [
+        "rm", "del", "format", "kill", "sudo", "shutdown", "reboot", 
+        "mkfs", "dd", "chmod", "chown", "passwd", "root", ">", ">>", "|"
+    ]
+
+    @staticmethod
+    def validate_cli_command(command: str) -> dict:
+        """
+        Validate a CLI command against security policies.
+        Returns: {"status": "safe" | "unsafe" | "blocked", "reason": str}
+        """
+        if not command:
+            return {"status": "blocked", "reason": "Empty command."}
+
+        cmd_lower = command.lower().strip()
+        cmd_base = cmd_lower.split()[0] if cmd_lower.split() else ""
+
+        # 1. Block Hard-coded Dangerous Patterns (Piping, Redirection, Sudo)
+        if any(p in cmd_lower for p in ["sudo", ">", ">>", "|", "&", ";", "`", "$("]):
+             return {"status": "blocked", "reason": "Command contains forbidden execution patterns (piping, redirection, or elevation)."}
+
+        # 2. Check against Denylist
+        if any(p in cmd_base for p in SecurityShield.DANGEROUS_PATTERNS) or any(p in cmd_base for p in SecurityShield.DANGEROUS_COMMANDS):
+             return {"status": "blocked", "reason": f"Command '{cmd_base}' is explicitly blocked for security reasons."}
+
+        # 3. Check against Allowlist
+        if any(cmd_lower.startswith(safe) for safe in SecurityShield.SAFE_COMMANDS):
+             return {"status": "safe", "reason": "Command is in the verified allowlist."}
+
+        # 4. Special Case: Allow Safe Info-gathering Flags (Learning Mode)
+        # Allows commands like 'anytool --help' or 'anytool --version' to enable self-learning
+        if any(f in cmd_lower for f in ["--help", "-h", "--version", "-v"]):
+             # Ensure it's not a complex command (no spaces or unusual patterns after flag)
+             # and the base command isn't in dangerous list
+             return {"status": "safe", "reason": "Permitted info-gathering flag for self-learning flow."}
+
+        # 5. Default to Unsafe (Requires Approval)
+        return {"status": "unsafe", "reason": "Command is not in the allowlist and requires manual approval from the administrator."}
+
+    @staticmethod
+    def analyze_risk(content: str, source: str = "Unknown") -> dict:
+        """
+        Analyze content for known dangerous patterns.
+        Expanded for PRO heuristics.
+        """
+        if not content:
+            return {"safe": True, "reason": "empty"}
+
+        risk_score = 0
+        reasons = []
+
+        # 1. Dangerous Patterns (XSS, SQLi, Injection) — pre-compiled
+        for pat in SecurityShield._COMPILED_DANGEROUS:
+            if pat.search(content):
+                risk_score += 10
+                reasons.append("Matched dangerous code pattern")
+        
+        # 1a. Protected Files Violation (Critical)
+        for protected in SecurityShield.PROTECTED_FILES:
+            if protected in content:
+                # If command/script mentions a protected file, block it
+                risk_score += 100
+                reasons.append(f"PROTECTION VIOLATION: Accessing protected file '{protected}' is strictly forbidden.")
+        
+        # 2. CLI Validation (Commands, Redirection, Piping)
+        # We split multi-commands (e.g. cmd1 ; cmd2) and check each
+        commands_to_check = re.split(r'[;&|]', content)
+        for cmd in commands_to_check:
+            cli_report = SecurityShield.validate_cli_command(cmd.strip())
+            if cli_report["status"] == "blocked":
+                risk_score += 20
+                reasons.append(f"CLI Block: {cli_report['reason']}")
+
+        # 3. Prompt Injection
+        injection_report = SecurityShield.detect_prompt_injection(content)
+        if not injection_report["safe"]:
+            risk_score += 15
+            reasons.append(injection_report["reason"])
+
+        # 4. Encoding Checks
+        encoding_report = SecurityShield.detect_suspicious_encoding(content)
+        if not encoding_report["safe"]:
+            risk_score += 5
+            reasons.append(encoding_report["reason"])
+
+        is_safe = risk_score < 20 # Allow low risk, block high risk (CLI block is 20)
+        
+        if not is_safe:
+            logger.warning(f"[SECURITY] Risk ({risk_score}) detected from {source}: {reasons}")
+
+        return {
+            "safe": is_safe,
+            "score": risk_score,
+            "reasons": reasons
+        }
+

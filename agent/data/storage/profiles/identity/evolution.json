@@ -1,0 +1,13 @@
+{
+    "level": 1,
+    "xp": 120.0,
+    "metrics": {
+        "confidence": 0.5,
+        "empathy": 1.0,
+        "maturity": 0.1,
+        "reliability": 0.8
+    },
+    "total_tasks": 0,
+    "total_chats": 120,
+    "created_at": "2026-02-21T06:01:05.766763"
+}

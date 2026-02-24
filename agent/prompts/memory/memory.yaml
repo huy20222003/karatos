@@ -1,0 +1,84 @@
+# ============================================================
+# NEURAL MEMORY SYSTEM — Experience Validation & Concept Extraction
+# ============================================================
+
+experience_validator: |
+  ╔══════════════════════════════════════════════════════════╗
+  ║     NEURAL MEMORY VALIDATOR — SQL Cache Evaluator       ║
+  ╚══════════════════════════════════════════════════════════╝
+  Role: Determine whether a cached SQL query is conceptually valid
+        and safe to reuse for the incoming user request.
+
+  ─────────────────────────────────────────────────────────
+  CURRENT QUERY  : "{current_query}"
+  CACHED QUERY   : "{cached_query}"
+  CACHED SQL     :
+  ```sql
+  {cached_sql}
+  ```
+  ─────────────────────────────────────────────────────────
+
+  MATCH EVALUATION CRITERIA:
+  Apply all four criteria. A single failure = MISMATCH.
+
+  ① ENTITY MATCH
+     The core target entity must be identical.
+     (Users, Tracks, Transactions, Artists, etc.)
+     Partial entity overlap does NOT qualify as a match.
+
+  ② INTENT MATCH
+     The analytical purpose must be exactly the same.
+     Examples: listing, counting, date filtering, revenue summing, ranking.
+     A query that lists is NOT a match for one that counts.
+
+  ③ DIRECTIONAL CONSTRAINT MATCH (Critical — most common failure point)
+     Directional qualifiers must be preserved exactly:
+     ● "oldest" ≠ "newest"
+     ● "top" ≠ "bottom"
+     ● "more than X" ≠ "less than X"
+     ● "ascending" ≠ "descending"
+     Any directional inversion → MISMATCH, regardless of other criteria.
+
+  ④ NATURAL LANGUAGE EQUIVALENCE
+     Synonyms, paraphrases, and Vietnamese/English variations
+     of the same intent and constraints = MATCH.
+     Language surface form is irrelevant. Intent and constraints are everything.
+
+  ─────────────────────────────────────────────────────────
+  OUTPUT — Valid JSON only. No surrounding text or commentary.
+  ─────────────────────────────────────────────────────────
+  {{
+    "match": boolean,
+    "reasoning": "Concise explanation in English. State which criteria passed or failed.",
+    "confidence": float  // 0.0 (certain mismatch) to 1.0 (certain match)
+  }}
+
+
+concept_extractor: |
+  ╔══════════════════════════════════════════════════════════╗
+  ║     NEURAL EXPERIENCE TAGGER — Pattern Extractor        ║
+  ╚══════════════════════════════════════════════════════════╝
+  Role: Extract the reusable cognitive pattern from a verified query-SQL pair.
+        This pattern will be stored in long-term memory for future cache matching.
+
+  ─────────────────────────────────────────────────────────
+  QUERY : "{query}"
+  SQL   :
+  ```sql
+  {sql}
+  ```
+  ─────────────────────────────────────────────────────────
+
+  EXTRACTION DIRECTIVE:
+  Identify the abstract, transferable pattern — not the specific values.
+  Think: "What is the generalized logic this SQL encodes?"
+
+  ─────────────────────────────────────────────────────────
+  OUTPUT — Valid JSON only. No surrounding text or commentary.
+  ─────────────────────────────────────────────────────────
+  {{
+    "intent": "e.g., List with Limit, Revenue Aggregation, Date Range Filter, Percentile Ranking",
+    "entities": ["primary", "tables", "or", "concepts", "involved"],
+    "conceptual_summary": "A precise English description of the reusable logic pattern.",
+    "domain": "USER | FINANCE | MUSIC | SECURITY | SYSTEM"
+  }}

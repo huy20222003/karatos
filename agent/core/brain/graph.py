@@ -1,0 +1,458 @@
+import asyncio
+from typing import Optional, Any
+from langgraph.graph import StateGraph, END
+
+from config.settings import settings
+from utils.logger import get_logger
+from ..identity import AgentIdentity
+from langchain_ollama import OllamaLLM
+
+# Imports from modular brain
+from .state import AgentState, ChatState
+from .utils import route_chat, should_continue_execution, should_investigate, should_continue
+from channels.telegram.channel import get_telegram_channel
+from .nodes.observe import chat_observe_node, observe_node
+from .nodes.router import chat_route_node
+from .nodes.plan import chat_plan_node, chat_prepare_step_node
+from .nodes.act import chat_act_node, chat_collect_result_node
+from .nodes.generate import chat_generate_node
+from .nodes.reflect import chat_reflect_node
+from .nodes.self_correction import chat_self_correction_node
+from .nodes.autonomous import reason_node, investigate_node, decide_node, act_node, reflect_node as auto_reflect_node
+from .nodes.critic import critic_node
+from .nodes.goal_proposer import propose_goals_node
+
+logger = get_logger()
+
+class Brain:
+    """
+    Main Brain Class
+    Orchestrates the thinking process using LangGraph.
+    """
+    def __init__(self):
+        self.compiled_chat_graph = None
+        self.compiled_graph = None
+        self.graph = None
+        self.is_initialized = False
+        self.model = None
+
+    async def initialize(self) -> bool:
+        """Initialize the brain and compile the graph"""
+        try:
+            # Connect to Ollama
+            logger.info(f"Connecting to Ollama at {settings.ollama_base_url} (Model: {settings.ollama_model_name})...")
+            from langchain_ollama import ChatOllama
+            self.model = ChatOllama(
+                base_url=settings.ollama_base_url,
+                model=settings.ollama_model_name,
+                temperature=settings.model_temperature,
+                # ChatOllama specific params
+                timeout=60.0,
+                client_kwargs={"headers": settings.ollama_headers}
+            )
+            
+            # Register for singleton use
+            from .model import SharedModelProvider
+            SharedModelProvider.set_model(self.model)
+            
+            # Warmup is now handled by BrainAgent to prevent duplication.
+            logger.info("Brain connection established")
+            
+            # Build Graphs
+            self._build_graph()
+            self._build_chat_graph()
+            
+            self.is_initialized = True
+            logger.info("Brain initialized with Modular LangGraph Architecture")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize Brain: {e}")
+            return False
+
+    def _build_graph(self):
+        """Compile the autonomous agent graph"""
+        self.graph = StateGraph(AgentState)
+        self.graph.add_node("observe", observe_node)
+        self.graph.add_node("reason", reason_node)
+        self.graph.add_node("investigate", investigate_node)
+        self.graph.add_node("decide", decide_node)
+        # self.graph.add_node("evolve", evolve_node) # Removed autonomous self-evolution
+        self.graph.add_node("critic", critic_node)
+        self.graph.add_node("act", act_node)
+        self.graph.add_node("reflect", auto_reflect_node)
+        self.graph.add_node("propose_goals", propose_goals_node)
+        
+        self.graph.set_entry_point("observe")
+        self.graph.add_edge("observe", "reason")
+        
+        self.graph.add_conditional_edges(
+            "reason", 
+            should_investigate, 
+            {"investigate": "investigate", "decide": "decide"}
+        )
+        
+        self.graph.add_edge("investigate", "decide")
+        self.graph.add_edge("decide", "critic") # Skipped evolve node
+        # self.graph.add_edge("decide", "evolve")
+        # self.graph.add_edge("evolve", "critic")
+        self.graph.add_edge("critic", "act")
+        self.graph.add_edge("act", "reflect")
+        self.graph.add_edge("reflect", "propose_goals")
+        self.graph.add_edge("propose_goals", END)
+        
+        self.compiled_graph = self.graph.compile()
+        logger.debug("Modular Autonomous Graph compiled successfully")
+
+    async def run_cycle(self, audit_logs: list[dict], context: dict = None) -> dict:
+        """Entry point for the Autonomous Loop"""
+        if not self.is_initialized:
+             logger.error("Brain not initialized. Call initialize() first.")
+             return {"error": "Brain not initialized"}
+             
+        initial_state: AgentState = {
+            "phase": "start",
+            "audit_logs": audit_logs,
+            "context": context or {},
+            "anomalies": [],
+            "current_target": None,
+            "evidence": [],
+            "thoughts": [],
+            "analysis": None,
+            "decision": None,
+            "action_result": None,
+            "should_investigate": False,
+            "investigation_complete": False,
+            "cycle_complete": False,
+            "mood": "OPTIMISTIC",
+            "energy_level": 1.0,
+            "goals": [],
+            "error": None
+        }
+        logger.info("Starting Modular LangGraph thinking cycle...")
+        try:
+            final_state = await self.compiled_graph.ainvoke(initial_state)
+            logger.info(f"Cycle complete. Thoughts generated: {len(final_state.get('thoughts', []))}")
+            return final_state
+        except Exception as e:
+            logger.error(f"[BRAIN] Autonomous Cycle Failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {"error": str(e)}
+            
+    def get_stats(self) -> dict:
+        """Get brain status statistics"""
+        return {
+            "initialized": self.is_initialized,
+            "model_loaded": self.model is not None,
+            "graph_compiled": self.compiled_graph is not None,
+            "chat_graph_compiled": self.compiled_chat_graph is not None,
+            "ollama_model": settings.ollama_model_name
+        }
+
+    def _build_chat_graph(self):
+        """Compile the chat reasoning graph"""
+        graph = StateGraph(ChatState)
+        
+        # Add Nodes
+        graph.add_node("parallel_startup", chat_parallel_startup_node)
+        graph.add_node("route", chat_route_node)
+        graph.add_node("plan", chat_plan_node)
+        graph.add_node("prepare_step", chat_prepare_step_node)
+        graph.add_node("act", chat_act_node)
+        graph.add_node("collect", chat_collect_result_node)
+        graph.add_node("generate", chat_generate_node)
+        graph.add_node("self_correction", chat_self_correction_node)
+        graph.add_node("reflect", chat_reflect_node)
+        graph.add_node("critic", critic_node) # Safety Guard
+        
+        # Define Edges
+        graph.set_entry_point("parallel_startup")
+        graph.add_edge("parallel_startup", "route")
+        
+        # Routing Logic
+        graph.add_conditional_edges(
+            "route",
+            route_chat,
+            {
+                "plan": "plan",
+                "generate": "generate",
+                "prepare_step": "prepare_step",
+                "__end__": END
+            }
+        )
+        
+        graph.add_edge("plan", "prepare_step")
+        
+        # --- CRITIC INTEGRATION (CHAT SAFETY) ---
+        # "Prepare Step" -> "Critic" -> "Act"
+        # The Critic reviews the prepared decision before execution.
+        graph.add_edge("prepare_step", "critic")
+        graph.add_edge("critic", "act")
+        
+        graph.add_edge("act", "collect")
+        
+        # Loop Logic
+        graph.add_conditional_edges(
+            "collect", 
+            should_continue_execution, 
+            {
+                "prepare_step": "prepare_step", 
+                "generate": "generate"
+            }
+        )
+        
+        graph.add_edge("generate", "self_correction")
+        graph.add_edge("self_correction", "reflect")
+        graph.add_edge("reflect", END)
+        
+        self.compiled_chat_graph = graph.compile()
+        logger.debug("Modular Chat Graph compiled successfully")
+
+    async def chat(self, user_message: str, chat_id: str, context: dict = None) -> dict:
+        """Main entry point for chat interaction"""
+        if not self.is_initialized:
+            return {"response": "My reasoning engine is currently offline."}
+
+        # --- OPTIMIZATION: PRE-COMPUTE EMBEDDING ---
+        from utils.embeddings import get_embedding_engine
+        engine = get_embedding_engine()
+        query_vector = await engine.get_embedding(user_message)
+        # -------------------------------------------
+
+        initial_state: ChatState = {
+            "chat_id": chat_id,
+            "user_message": user_message,
+            "chat_history": [],
+            "context": context or {},
+            "query_vector": query_vector, 
+            "thoughts": [],
+            "response": "",
+            "decision": None,
+            "action_result": None,
+            "phase": "start",
+            "needs_planning": False,
+            "plan": [],
+            "current_step": 0,
+            "task_outputs": [],
+            "logic": "",
+            "associative_context": "",
+            "cycle_complete": False,
+            "is_fast_track": False,
+            "mood": "OPTIMISTIC",
+            "energy_level": 1.0,
+            "user_affinity": 0.5,
+            "error": None
+        }
+        initial_state["response_vector"] = None 
+        
+        import time
+        t_start = time.time()
+        logger.info(f"Starting Modular Chat Graph cycle for {chat_id}...")
+        
+        try:
+            # Execution Strategy:
+            # 1. Run until 'route' or 'plan' node
+            # 2. If it's a PLAN (and not fast track), Notify User and continue in background
+            # 3. Else, return final state immediately
+            
+            final_state = initial_state
+            is_plan_offloaded = False
+            
+            async for event in self.compiled_chat_graph.astream(initial_state):
+                for node_name, state_update in event.items():
+                    final_state.update(state_update)
+                    
+                    # Detect if we need to offload
+                    # NGO: Added check for 'is_test' to allow synchronous testing
+                    if node_name == "plan" and final_state.get("plan") and not final_state.get("is_fast_track") and not final_state.get("context", {}).get("is_test"):
+                        logger.info(f"[BRAIN] Offloading complex plan execution for {chat_id}")
+                        
+                        # --- CHANNEL AGNOSTIC NOTIFICATION ---
+                        from channels.base import get_channel
+                        channel_name = final_state.get("context", {}).get("channel", "telegram")
+                        channel = get_channel(channel_name)
+                        
+                        # --- NGO FIX: CONCISE DYNAMIC ACKNOWLEDGEMENT ---
+                        if channel:
+                            # Generate a dynamic notification
+                            status_msg = await self._generate_status_update(
+                                final_state, 
+                                event_type="PLAN_ACK", 
+                                event_detail="Đã nhận lệnh và đang triển khai!"
+                            )
+                            await channel.send(status_msg, recipient=chat_id)
+                        
+                        # Launch background monitor for the REST of the graph (Reset Fast-Track for full synthesis)
+                        logger.info(f"[BRAIN] Resetting is_fast_track=False for background synthesis on {chat_id}")
+                        final_state["is_fast_track"] = False
+                        asyncio.create_task(self._monitor_plan_execution(final_state, chat_id))
+                            
+                        is_plan_offloaded = True
+                        break # Break the astream loop for the main thread
+                
+                if is_plan_offloaded:
+                    break
+
+            if is_plan_offloaded:
+                return None # True silence for the return value
+
+            t_end = time.time()
+            logger.info(f"[PERF] Total Brain Cycle took: {t_end - t_start:.3f}s")
+            return final_state
+            
+        except Exception as e:
+            logger.error(f"[BRAIN] Graph execution failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"response": "I apologize, an error occurred during processing.", "error": str(e)}
+
+    async def _generate_status_update(self, state: ChatState, event_type: str, event_detail: str) -> str:
+        """
+        Generate a witty, persona-consistent status update using the LLM.
+        """
+        try:
+            from .nodes.generate import GeneratorModel
+            from .prompts.registry import get_prompt_registry
+            from config.settings import settings
+            
+            model = GeneratorModel()
+            p_registry = get_prompt_registry()
+            
+            bot_name = getattr(settings, 'bot_name', 'Brain')
+            total_steps = len(state.get("plan", []))
+            current_step = state.get("current_step", 0)
+            
+            prompt = p_registry.get(
+                "persona.generator.status_notification",
+                bot_name=bot_name,
+                mood=state.get("mood", "OPTIMISTIC"),
+                energy=f"{state.get('energy_level', 1.0)*100:.0f}%",
+                event_type=event_type,
+                event_detail=event_detail,
+                total_steps=total_steps,
+                current_step=current_step
+            )
+            
+            response = await model.think(prompt, phase="status_check")
+            
+            from .utils import get_llm_content, strip_thinking_tags, extract_json
+            content = strip_thinking_tags(get_llm_content(response))
+            
+            # --- NGO FIX: Unpack JSON if necessary ---
+            json_data = extract_json(content)
+            if isinstance(json_data, dict):
+                content = json_data.get("message") or json_data.get("text") or content
+            
+            return str(content).strip() or f"🔄 {event_detail}"
+            
+        except Exception as e:
+            logger.error(f"[BRAIN] Status generation failed: {e}")
+            return f"🔄 {event_detail}"
+
+    async def _monitor_plan_execution(self, state: ChatState, chat_id: str):
+        """
+        Background monitor for plan execution with progress updates.
+        """
+        from channels.base import get_channel
+        channel_name = state.get("context", {}).get("channel", "telegram")
+        channel = get_channel(channel_name)
+        
+        if not channel:
+            logger.warning(f"[BRAIN] Channel '{channel_name}' not available for plan monitoring.")
+            return
+
+        try:
+            # Re-start astream from where we left off
+            async for event in self.compiled_chat_graph.astream(state):
+                for node_name, state_update in event.items():
+                    state.update(state_update)
+                    
+                    # 1. Skip individual task updates to reduce noise as requested by Administrator
+                    if node_name == "act":
+                        pass 
+                    
+                    # 2. Skip synthesis update to reduce noise
+                    elif node_name == "generate":
+                        pass
+
+            # 3. Final Response (Generated by normal generate node)
+            response = state.get("response")
+            if response:
+                await channel.send(response, recipient=chat_id)
+                logger.info(f"[MONITOR] Plan execution complete for {chat_id} via {channel_name}")
+                
+                # --- NGO FIX: A2A Mailbox dropping for Background Tasks ---
+                try:
+                    resp_text = ""
+                    if isinstance(response, str):
+                        resp_text = response
+                    elif isinstance(response, dict):
+                        resp_text = response.get("text") or response.get("caption") or ""
+                        
+                    if resp_text:
+                        import re
+                        mentions = set(re.findall(r'@\w+', resp_text))
+                        if mentions:
+                            from config.settings import settings
+                            my_username = getattr(settings, 'bot_username', 'SystemBot')
+                            my_username = f"@{my_username}" if not my_username.startswith('@') else my_username
+                            
+                            from skills.mcp_realm import get_mcp_realm
+                            realm = get_mcp_realm()
+                            
+                            for m in mentions:
+                                if m.lower() != my_username.lower():
+                                    await realm.execute("mailbox:drop_message", {
+                                        "sender": my_username,
+                                        "target": m,
+                                        "chat_id": str(chat_id),
+                                        "content": resp_text
+                                    })
+                except Exception as e:
+                    logger.error(f"[MONITOR] A2A drop failed in background: {e}")
+        except Exception as e:
+            logger.error(f"[MONITOR] Background execution failed: {e}")
+            await channel.send(f"❌ Niva encountered an issue during execution: {str(e)}", recipient=chat_id)
+
+    async def shutdown(self):
+        """Shutdown brain resources (MCP sessions, etc.)"""
+        logger.info("[BRAIN] Shutting down brain resources...")
+        try:
+            from skills.mcp_realm import get_mcp_realm
+            mcp = get_mcp_realm()
+            await mcp.shutdown()
+            logger.info("[BRAIN] MCP sessions closed.")
+        except Exception as e:
+             logger.error(f"[BRAIN] Error during shutdown: {e}")
+
+async def chat_parallel_startup_node(state: ChatState) -> ChatState:
+    """
+    ALGORITHMIC PARALLEL STARTUP:
+    Run Observation, Speculative Recall, and Data Speculation in concurrent threads.
+    """
+    import time
+    # 1. Observation Task (DB logs)
+    obs_task = chat_observe_node(state)
+    
+    # 2. Speculative Recall Task (Semantic Search)
+    async def speculative_recall(st: ChatState):
+        if st.get("query_vector") and st.get("context", {}).get("memory"):
+            memory = st["context"]["memory"]
+            memories = await memory.deep_recall(st["user_message"], query_vector=st["query_vector"], limit=8)
+            return {"speculative_memories": memories}
+        return {}
+
+    recall_task = speculative_recall(state)
+    
+    # 3. Data Speculation Task (Pre-fetch Schema)
+    from .nodes.speculator import data_speculator_node
+    spec_task = data_speculator_node(state)
+    
+    # Execute in parallel
+    results = await asyncio.gather(obs_task, recall_task, spec_task)
+    for res_state in results:
+        state.update(res_state)
+        
+    return state
+

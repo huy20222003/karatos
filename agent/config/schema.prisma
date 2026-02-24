@@ -1,0 +1,1369 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector]
+}
+
+model User {
+  id                    String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email                 String               @unique
+  password              String
+  username              String               @unique
+  fullName              String?
+  avatarUrl             String?
+  birthday              DateTime?
+  locale                String               @default("en")
+  role                  Role                 @default(USER)
+  isVerified            Boolean              @default(false)
+  isBanned              Boolean              @default(false)
+  subscriptionPlanId    String?              @map("subscription_plan_id") @db.Uuid
+  subscriptionExpiresAt DateTime?            @map("subscription_expires_at")
+  createdAt             DateTime             @default(now()) @map("created_at")
+  updatedAt             DateTime             @updatedAt @map("updated_at")
+  autoRenewal           Boolean              @default(true) @map("auto_renewal")
+  publicKey             String?              @map("public_key")
+  donations             ArtistDonation[]     @relation("UserDonations")
+  artistProfile         Artist?
+  auditLogs             AuditLog[]
+  comments              Comment[]
+  depositRequests       DepositRequest[]
+  sentMessages          DirectMessage[]
+  downloadHistory       DownloadHistory[]
+  follows               Follow[]
+  licensePurchases      LicensePurchase[]
+  likes                 Like[]
+  hostedParties         ListeningParty[]     @relation("PartyHost")
+  reports               Report[]             @relation("UserReportsSent")
+  notifications         Notification[]
+  partyMessages         PartyMessage[]
+  partyParticipations   PartyParticipant[]
+  partyQueueItems       PartyQueueItem[]
+  payments              PaymentTransaction[]
+  playHistory           PlayHistory[]
+  playlists             Playlist[]
+  conversations         UserConversation[]
+  encryptedKeys         UserEncryptedKey[]
+  wallet                UserWallet?
+  mysticProfile         MysticProfile?
+  dailyOracles          DailyOracle[]
+  mysticMessages        MysticMessage[]
+  sandboxSessions       SandboxSession[]
+  subscriptionPlan      SubscriptionPlan?    @relation(fields: [subscriptionPlanId], references: [id])
+  verificationTokens    VerificationToken[]
+  deletedAt             DateTime?            @map("deleted_at")
+  // Block feature
+  blockedUsers          UserBlock[]          @relation("UserBlocks")
+  blockedByUsers        UserBlock[]          @relation("BlockedByUsers")
+  warningCount          Int                  @default(0) @map("warning_count")
+  reportsReceived       Report[]             @relation("UserReportsReceived")
+
+  @@index([role, isBanned, isVerified, deletedAt])
+  @@index([role, createdAt(sort: Desc)])
+  @@index([username])
+  @@index([email])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model VerificationToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @db.Uuid
+  token     String    @unique
+  type      TokenType
+  expiresAt DateTime  @map("expires_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId, type])
+  @@map("verification_tokens")
+}
+
+model SubscriptionPlan {
+  id           String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String
+  slug         String               @unique
+  description  String?
+  price        Decimal              @default(0) @db.Decimal(10, 2)
+  currency     String               @default("USD")
+  durationDays Int                  @default(30)
+  features     Json?
+  tierLevel    Int                  @default(1)
+  isActive     Boolean              @default(true)
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
+  payments     PaymentTransaction[]
+  users        User[]
+
+  @@map("subscription_plans")
+}
+
+model DiscountCode {
+  id          String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String               @unique
+  description String?
+  type        DiscountType         @default(PERCENTAGE)
+  value       Decimal              @db.Decimal(10, 2)
+  minPurchase Decimal?             @db.Decimal(10, 2)
+  maxDiscount Decimal?             @db.Decimal(10, 2)
+  usageLimit  Int?
+  usedCount   Int                  @default(0)
+  isActive    Boolean              @default(true)
+  expiresAt   DateTime?            @map("expires_at")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+  createdBy   String?              @db.Uuid
+  payments    PaymentTransaction[]
+
+  @@index([code])
+  @@index([isActive, expiresAt])
+  @@map("discount_codes")
+}
+
+model PaymentTransaction {
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String           @map("user_id") @db.Uuid
+  subscriptionPlanId String           @map("subscription_plan_id") @db.Uuid
+  amount             Decimal          @db.Decimal(10, 2)
+  originalAmount     Decimal?         @map("original_amount") @db.Decimal(10, 2)
+  currency           String           @default("VND")
+  status             PaymentStatus    @default(PENDING)
+  paymentMethod      String?          @default("SEPAY_BANK_TRANSFER") @map("payment_method")
+  transactionRef     String?          @unique @map("transaction_ref")
+  orderRef           String           @unique @map("order_ref")
+  discountCodeId     String?          @map("discount_code_id") @db.Uuid
+  metadata           Json?
+  expiresAt          DateTime?        @map("expires_at")
+  completedAt        DateTime?        @map("completed_at")
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+  discountCode       DiscountCode?    @relation(fields: [discountCodeId], references: [id])
+  subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id])
+  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([orderRef])
+  @@map("payment_transactions")
+}
+
+model Artist {
+  id              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String                @unique @db.Uuid
+  bio             String?
+  socialLinks     Json?
+  verificationUrl    String?
+  verificationCode   String?       @map("verification_code")
+  verificationStatus UrlScanStatus @default(PENDING_SCAN) @map("verification_status")
+  status             ArtistStatus  @default(PENDING)
+  createdAt       DateTime              @default(now()) @map("created_at")
+  updatedAt       DateTime              @updatedAt @map("updated_at")
+  donations       ArtistDonation[]
+  earnings        ArtistEarnings?
+  paymentMethods  ArtistPaymentMethod[]
+  user            User                  @relation(fields: [userId], references: [id])
+  followers       Follow[]
+  tracks          Track[]
+  conversations   UserConversation[]
+  deletedAt       DateTime?             @map("deleted_at")
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("artists")
+}
+
+model Track {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  artistId         String             @db.Uuid
+  title            String
+  slug             String
+  coverUrl         String?
+  audioUrl         String?
+  duration         Int?
+  lyrics           String?
+  position         Int?
+  status           TrackStatus        @default(PENDING)
+  genre            String?
+  subGenre         String?            @map("sub_genre")
+  language         String?            @default("en")
+  mood             String[]           @default([])
+  tags             String[]           @default([])
+  bpm              Int?
+  musicalKey       String?            @map("musical_key")
+  isExplicit       Boolean            @default(false) @map("is_explicit")
+  releaseDate      DateTime?          @map("release_date")
+  recordLabel      String?            @map("record_label")
+  isrc             String?
+  copyright        String?
+  license          String?            @default("all-rights-reserved")
+  composer         String?
+  lyricist         String?
+  producer         String?
+  featuredArtists  String[]           @default([]) @map("featured_artists")
+  bitrate          Int?
+  sampleRate       Int?               @map("sample_rate")
+  audioFormat      String?            @map("audio_format")
+  waveformData     Json?              @map("waveform_data")
+  allowDownload    Boolean            @default(false) @map("allow_download")
+  allowComments    Boolean            @default(true) @map("allow_comments")
+  playCount        BigInt             @default(0) @map("play_count")
+  downloadCount    BigInt             @default(0) @map("download_count")
+  shareCount       BigInt             @default(0) @map("share_count")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+  deletedAt        DateTime?          @map("deleted_at")
+  previewDuration  Int                @default(30) @map("preview_duration")
+  pricingType      PricingType        @default(FREE) @map("pricing_type")
+  description      String?
+  fingerprint      String?
+  comments         Comment[]
+  copyrightClaims  CopyrightClaim[]
+  downloadHistory  DownloadHistory[]
+  licensePurchases LicensePurchase[]
+  likes            Like[]
+  dailyOracles     DailyOracle[]
+  playingInParties ListeningParty[]
+  partyQueueItems  PartyQueueItem[]
+  playHistory      PlayHistory[]
+  playlistItems    PlaylistItem[]
+  licenseTiers     TrackLicenseTier[]
+  artist           Artist             @relation(fields: [artistId], references: [id])
+
+  @@index([status, genre, createdAt(sort: Desc)])
+  @@index([status, pricingType, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([artistId, status])
+  @@index([pricingType, status])
+  @@index([deletedAt])
+  @@map("tracks")
+}
+
+model PlayHistory {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  trackId         String   @db.Uuid
+  userId          String?  @db.Uuid
+  playedAt        DateTime @default(now()) @map("played_at")
+  clientIp        String?  @map("client_ip")
+  durationPlayed  Int?     @map("duration_played")
+  fingerprintHash String?  @map("fingerprint_hash")
+  isValid         Boolean  @default(true) @map("is_valid")
+  track           Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  user            User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId, trackId, playedAt(sort: Desc)])
+  @@index([userId, playedAt(sort: Desc)])
+  @@index([trackId, playedAt])
+  @@index([trackId, userId, playedAt])
+  @@index([trackId, clientIp, playedAt])
+  @@map("play_history")
+}
+
+model PlayFraudLog {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  trackId     String    @db.Uuid
+  userId      String?   @db.Uuid
+  clientIp    String?   @map("client_ip")
+  reason      String
+  details     Json?
+  detectedAt  DateTime  @default(now()) @map("detected_at")
+  processed   Boolean   @default(false)
+  processedAt DateTime? @map("processed_at")
+
+  @@index([trackId, detectedAt])
+  @@index([userId, detectedAt])
+  @@index([processed, detectedAt])
+  @@map("play_fraud_logs")
+}
+
+model DownloadHistory {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String   @db.Uuid
+  trackId      String   @db.Uuid
+  downloadedAt DateTime @default(now()) @map("downloaded_at")
+  track        Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, downloadedAt(sort: Desc)])
+  @@index([trackId])
+  @@map("download_history")
+}
+
+model Follow {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @db.Uuid
+  artistId  String   @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  artist    Artist   @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, artistId])
+  @@index([artistId, createdAt])
+  @@map("follows")
+}
+
+model Playlist {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String         @db.Uuid
+  title       String
+  description String?
+  color       String?
+  isPublic    Boolean        @default(true)
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+  items       PlaylistItem[]
+  user        User           @relation(fields: [userId], references: [id])
+  deletedAt   DateTime?      @map("deleted_at")
+
+  @@unique([userId, title])
+  @@index([isPublic, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([deletedAt])
+  @@map("playlists")
+}
+
+model PlaylistItem {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  playlistId String   @db.Uuid
+  trackId    String   @db.Uuid
+  position   Int
+  addedAt    DateTime @default(now()) @map("added_at")
+  playlist   Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  track      Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@index([playlistId, position])
+  @@index([trackId])
+  @@map("playlist_items")
+}
+
+model Like {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @db.Uuid
+  trackId   String   @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  track     Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, trackId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("likes")
+}
+
+model Comment {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @db.Uuid
+  trackId   String    @db.Uuid
+  content   String
+  parentId  String?   @db.Uuid
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  parent    Comment?  @relation("CommentToComment", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Comment[] @relation("CommentToComment")
+  track     Track     @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([trackId, createdAt])
+  @@index([userId])
+  @@map("comments")
+}
+
+model CopyrightClaim {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  trackId        String             @db.Uuid
+  claimantName   String             @map("claimant_name")
+  claimantEmail  String?            @map("claimant_email")
+  claimType      CopyrightClaimType @default(AUDIO_MATCH) @map("claim_type")
+  description    String
+  evidenceUrl    String?            @map("evidence_url")
+  status         CopyrightStatus    @default(PENDING)
+  artistResponse String?            @map("artist_response")
+  adminNotes     String?            @map("admin_notes")
+  resolvedAt     DateTime?          @map("resolved_at")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+  track          Track              @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@map("copyright_claims")
+}
+
+
+model AuditLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String?  @db.Uuid
+  action    String
+  resource  String
+  details   Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}
+
+model SandboxSession {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  adminId      String        @map("admin_id") @db.Uuid
+  visitedUrls  String[]      @default([]) @map("visited_urls")
+  allowedCount Int           @default(0) @map("allowed_count")
+  blockedCount Int           @default(0) @map("blocked_count")
+  startTime    DateTime      @default(now()) @map("start_at")
+  endTime      DateTime?     @map("ended_at")
+  status       SandboxStatus @default(ACTIVE)
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  admin        User          @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId, createdAt])
+  @@map("sandbox_sessions")
+}
+
+model SystemSetting {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
+
+model Conversation {
+  id           String             @id @default(uuid())
+  sessionId    String             @unique
+  visitorName  String?
+  visitorEmail String?
+  status       ConversationStatus @default(ACTIVE)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  closedAt     DateTime?
+  messages     Message[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("conversations")
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  content        String
+  sender         String
+  senderName     String?
+  createdAt      DateTime     @default(now())
+  isRead         Boolean      @default(false)
+  isAiGenerated  Boolean      @default(false)
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt(sort: Asc)])
+  @@index([conversationId])
+  @@map("messages")
+}
+
+model RolePermission {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  role       Role
+  permission String
+  allowed    Boolean  @default(false)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([role, permission])
+  @@index([role])
+  @@map("role_permissions")
+}
+
+model Notification {
+  id        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String           @db.Uuid
+  type      NotificationType
+  title     String
+  message   String
+  link      String?
+  data      Json?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now()) @map("created_at")
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt(sort: Desc)])
+  @@map("notifications")
+}
+
+model BadWord {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  word      String   @unique
+  category  String?
+  severity  Int      @default(1)
+  language  String   @default("en")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  createdBy String?  @db.Uuid
+
+  @@index([word, isActive])
+  @@index([language, isActive])
+  @@map("bad_words")
+}
+
+model MonitoredService {
+  id           String        @id @default(uuid())
+  name         String
+  url          String
+  description  String?
+  status       ServiceStatus @default(OPERATIONAL)
+  isActive     Boolean       @default(true)
+  order        Int           @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  incidents    Incident[]
+  uptimeChecks UptimeCheck[]
+
+  @@map("monitored_services")
+}
+
+model UptimeCheck {
+  id           String           @id @default(uuid())
+  serviceId    String
+  status       Boolean
+  responseTime Int?
+  statusCode   Int?
+  checkedAt    DateTime         @default(now())
+  service      MonitoredService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@index([serviceId, checkedAt])
+  @@map("uptime_checks")
+}
+
+model Incident {
+  id          String           @id @default(uuid())
+  serviceId   String
+  title       String
+  description String?
+  status      IncidentStatus   @default(INVESTIGATING)
+  impact      IncidentImpact   @default(MINOR)
+  startedAt   DateTime         @default(now())
+  resolvedAt  DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  updates     IncidentUpdate[]
+  service     MonitoredService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@map("incidents")
+}
+
+model IncidentUpdate {
+  id         String         @id @default(uuid())
+  incidentId String
+  status     IncidentStatus
+  message    String
+  createdAt  DateTime       @default(now())
+  incident   Incident       @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@map("incident_updates")
+}
+
+model EmailTemplate {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug      String     @unique
+  name      String
+  subject   String
+  htmlBody  String
+  variables Json?
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+  emailLogs EmailLog[]
+
+  @@map("email_templates")
+}
+
+model EmailLog {
+  id         String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateId String?        @map("template_id") @db.Uuid
+  toEmail    String
+  subject    String
+  status     EmailStatus    @default(PENDING)
+  errorMsg   String?        @map("error_msg")
+  metadata   Json?
+  sentAt     DateTime       @default(now()) @map("sent_at")
+  template   EmailTemplate? @relation(fields: [templateId], references: [id])
+
+  @@index([toEmail])
+  @@index([status])
+  @@index([sentAt])
+  @@map("email_logs")
+}
+
+model SupportTicket {
+  id         String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String
+  email      String
+  subject    String
+  message    String
+  status     TicketStatus   @default(OPEN)
+  priority   TicketPriority @default(NORMAL)
+  assignedTo String?        @map("assigned_to") @db.Uuid
+  userId     String?        @map("user_id") @db.Uuid
+  createdAt  DateTime       @default(now()) @map("created_at")
+  updatedAt  DateTime       @updatedAt @map("updated_at")
+  replies    TicketReply[]
+
+  @@index([status])
+  @@index([email])
+  @@index([createdAt])
+  @@map("support_tickets")
+}
+
+model TicketReply {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ticketId  String        @map("ticket_id") @db.Uuid
+  message   String
+  isStaff   Boolean       @default(false) @map("is_staff")
+  senderId  String?       @map("sender_id") @db.Uuid
+  createdAt DateTime      @default(now()) @map("created_at")
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@map("ticket_replies")
+}
+
+model Banner {
+  id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bannerUrl String       @map("banner_url")
+  link      String
+  title     String?
+  startDate DateTime     @map("start_date")
+  endDate   DateTime     @map("end_date")
+  status    BannerStatus @default(ACTIVE)
+  sortOrder Int          @default(0) @map("sort_order")
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+  deletedAt DateTime?    @map("deleted_at")
+
+  @@index([status, startDate, endDate])
+  @@index([deletedAt])
+  @@map("banners")
+}
+
+model TrackLicenseTier {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  trackId     String            @map("track_id") @db.Uuid
+  type        LicenseType
+  price       Decimal           @db.Decimal(10, 2)
+  currency    String            @default("USD")
+  usageScope  String?           @map("usage_scope")
+  description String?
+  isActive    Boolean           @default(true) @map("is_active")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+  purchases   LicensePurchase[]
+  track       Track             @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@unique([trackId, type])
+  @@index([trackId, isActive])
+  @@map("track_license_tiers")
+}
+
+model LicensePurchase {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  licenseCode    String           @unique @map("license_code")
+  userId         String           @map("user_id") @db.Uuid
+  trackId        String           @map("track_id") @db.Uuid
+  licenseTierId  String           @map("license_tier_id") @db.Uuid
+  price          Decimal          @db.Decimal(10, 2)
+  platformFee    Decimal          @map("platform_fee") @db.Decimal(10, 2)
+  artistEarnings Decimal          @map("artist_earnings") @db.Decimal(10, 2)
+  currency       String           @default("USD")
+  paymentMethod  String?          @map("payment_method")
+  paymentRef     String?          @map("payment_ref")
+  status         PaymentStatus    @default(PENDING)
+  licenseType    LicenseType      @map("license_type")
+  usageScope     String?          @map("usage_scope")
+  buyerName      String?          @map("buyer_name")
+  buyerEmail     String?          @map("buyer_email")
+  buyerCompany   String?          @map("buyer_company")
+  projectName    String?          @map("project_name")
+  downloadCount  Int              @default(0) @map("download_count")
+  lastDownloadAt DateTime?        @map("last_download_at")
+  purchasedAt    DateTime         @default(now()) @map("purchased_at")
+  pdfHash        String?          @map("pdf_hash")
+  licenseTier    TrackLicenseTier @relation(fields: [licenseTierId], references: [id])
+  track          Track            @relation(fields: [trackId], references: [id])
+  user           User             @relation(fields: [userId], references: [id])
+
+  @@index([userId, purchasedAt(sort: Desc)])
+  @@index([userId, trackId, status])
+  @@index([trackId])
+  @@index([licenseCode])
+  @@map("license_purchases")
+}
+
+model ArtistEarnings {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  artistId       String         @unique @map("artist_id") @db.Uuid
+  totalEarnings  Decimal        @default(0) @map("total_earnings") @db.Decimal(12, 2)
+  pendingPayout  Decimal        @default(0) @map("pending_payout") @db.Decimal(12, 2)
+  totalWithdrawn Decimal        @default(0) @map("total_withdrawn") @db.Decimal(12, 2)
+  totalSales     Int            @default(0) @map("total_sales")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+  donationCount  Int            @default(0) @map("donation_count")
+  totalDonations Decimal        @default(0) @map("total_donations") @db.Decimal(12, 2)
+  artist         Artist         @relation(fields: [artistId], references: [id])
+  payouts        ArtistPayout[]
+
+  @@map("artist_earnings")
+}
+
+model ArtistDonation {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  artistId       String   @map("artist_id") @db.Uuid
+  donorUserId    String?  @map("donor_user_id") @db.Uuid
+  amount         Decimal  @db.Decimal(10, 2)
+  artistReceived Decimal  @map("artist_received") @db.Decimal(10, 2)
+  currency       String   @default("USD")
+  message        String?
+  isAnonymous    Boolean  @default(false) @map("is_anonymous")
+  createdAt      DateTime @default(now()) @map("created_at")
+  artist         Artist   @relation(fields: [artistId], references: [id])
+  donor          User?    @relation("UserDonations", fields: [donorUserId], references: [id])
+
+  @@index([artistId, createdAt(sort: Desc)])
+  @@map("artist_donations")
+}
+
+model ArtistPayout {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  earningsId     String         @map("earnings_id") @db.Uuid
+  amount         Decimal        @db.Decimal(12, 2)
+  currency       String         @default("USD")
+  status         PayoutStatus   @default(PENDING)
+  paymentMethod  String?        @map("payment_method")
+  paymentDetails Json?          @map("payment_details")
+  note           String?
+  processedAt    DateTime?      @map("processed_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  transactionRef String?        @map("transaction_ref")
+  earnings       ArtistEarnings @relation(fields: [earningsId], references: [id])
+
+  @@index([earningsId, status])
+  @@map("artist_payouts")
+}
+
+model UserWallet {
+  id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String              @unique @map("user_id") @db.Uuid
+  balance      Decimal             @default(0) @db.Decimal(12, 2)
+  totalDeposit Decimal             @default(0) @map("total_deposit") @db.Decimal(12, 2)
+  totalSpent   Decimal             @default(0) @map("total_spent") @db.Decimal(12, 2)
+  currency     String              @default("USD")
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+
+  @@map("user_wallets")
+}
+
+model WalletTransaction {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  walletId      String         @map("wallet_id") @db.Uuid
+  type          WalletTxType
+  amount        Decimal        @db.Decimal(10, 2)
+  balanceBefore Decimal        @map("balance_before") @db.Decimal(12, 2)
+  balanceAfter  Decimal        @map("balance_after") @db.Decimal(12, 2)
+  description   String?
+  referenceId   String?        @map("reference_id") @db.Uuid
+  referenceType String?        @map("reference_type")
+  status        WalletTxStatus @default(COMPLETED)
+  createdAt     DateTime       @default(now()) @map("created_at")
+  wallet        UserWallet     @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, createdAt(sort: Desc)])
+  @@map("wallet_transactions")
+}
+
+model DepositRequest {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String        @map("user_id") @db.Uuid
+  amount        Decimal       @db.Decimal(10, 2)
+  currency      String        @default("USD")
+  paymentMethod String?       @map("payment_method")
+  paymentRef    String?       @map("payment_ref")
+  note          String?
+  status        DepositStatus @default(PENDING)
+  adminNote     String?       @map("admin_note")
+  processedBy   String?       @map("processed_by") @db.Uuid
+  processedAt   DateTime?     @map("processed_at")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("deposit_requests")
+}
+
+model ArtistPaymentMethod {
+  id            String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  artistId      String               @map("artist_id") @db.Uuid
+  type          PaymentMethodType
+  isDefault     Boolean              @default(false) @map("is_default")
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+  bankAccount   ArtistBankAccount?
+  artist        Artist               @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  paypalAccount ArtistPaypalAccount?
+
+  @@map("artist_payment_methods")
+}
+
+model ArtistBankAccount {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  methodId      String              @unique @map("method_id") @db.Uuid
+  bankName      String              @map("bank_name")
+  accountNumber String              @map("account_number")
+  accountHolder String              @map("account_holder")
+  branch        String?
+  paymentMethod ArtistPaymentMethod @relation(fields: [methodId], references: [id], onDelete: Cascade)
+
+  @@map("artist_bank_accounts")
+}
+
+model ArtistPaypalAccount {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  methodId      String              @unique @map("method_id") @db.Uuid
+  email         String
+  paymentMethod ArtistPaymentMethod @relation(fields: [methodId], references: [id], onDelete: Cascade)
+
+  @@map("artist_paypal_accounts")
+}
+
+model UserConversation {
+  id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String          @db.Uuid
+  artistId  String          @db.Uuid
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+  messages  DirectMessage[]
+  artist    Artist          @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, artistId])
+  @@index([userId])
+  @@index([artistId])
+  @@map("user_conversations")
+}
+
+model DirectMessage {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String           @map("conversation_id") @db.Uuid
+  senderId       String           @map("sender_id") @db.Uuid
+  content        String
+  isRead         Boolean          @default(false) @map("is_read")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  iv             String?
+  conversation   UserConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User             @relation(fields: [senderId], references: [id])
+
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([conversationId])
+  @@index([senderId])
+  @@map("direct_messages")
+}
+
+model UserEncryptedKey {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  conversationId String   @map("conversation_id")
+  encryptedKey   String   @map("encrypted_key")
+  createdAt      DateTime @default(now()) @map("created_at")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, conversationId])
+  @@index([userId])
+  @@map("user_encrypted_keys")
+}
+
+model ListeningParty {
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String
+  code            String             @unique
+  hostId          String             @map("host_id") @db.Uuid
+  isActive        Boolean            @default(true) @map("is_active")
+  isPublic        Boolean            @default(false) @map("is_public")
+  visualizerType  String             @default("solar") @map("visualizer_type")
+  password        String?
+  maxGuests       Int                @default(10) @map("max_guests")
+  currentTrackId  String?            @map("current_track_id") @db.Uuid
+  isPlaying       Boolean            @default(false) @map("is_playing")
+  currentPosition Int                @default(0) @map("current_position")
+  lastSyncAt      DateTime           @default(now()) @map("last_sync_at")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  endedAt         DateTime?          @map("ended_at")
+  currentTrack    Track?             @relation(fields: [currentTrackId], references: [id])
+  host            User               @relation("PartyHost", fields: [hostId], references: [id])
+  messages        PartyMessage[]
+  participants    PartyParticipant[]
+  queue           PartyQueueItem[]
+
+  @@index([code])
+  @@index([hostId])
+  @@index([isActive, isPublic])
+  @@map("listening_parties")
+}
+
+model PartyParticipant {
+  id       String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  partyId  String         @map("party_id") @db.Uuid
+  userId   String         @map("user_id") @db.Uuid
+  role     String         @default("guest")
+  joinedAt DateTime       @default(now()) @map("joined_at")
+  leftAt   DateTime?      @map("left_at")
+  party    ListeningParty @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  user     User           @relation(fields: [userId], references: [id])
+
+  @@unique([partyId, userId])
+  @@index([partyId])
+  @@index([userId])
+  @@map("party_participants")
+}
+
+model PartyMessage {
+  id        String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  partyId   String         @map("party_id") @db.Uuid
+  userId    String         @map("user_id") @db.Uuid
+  content   String
+  type      String         @default("text")
+  createdAt DateTime       @default(now()) @map("created_at")
+  iv        String?
+  party     ListeningParty @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id])
+
+  @@index([partyId, createdAt(sort: Desc)])
+  @@index([partyId])
+  @@index([userId])
+  @@map("party_messages")
+}
+
+model PartyQueueItem {
+  id        String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  partyId   String         @map("party_id") @db.Uuid
+  trackId   String         @map("track_id") @db.Uuid
+  addedById String         @map("added_by_id") @db.Uuid
+  position  Int
+  played    Boolean        @default(false)
+  createdAt DateTime       @default(now()) @map("created_at")
+  addedBy   User           @relation(fields: [addedById], references: [id])
+  party     ListeningParty @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  track     Track          @relation(fields: [trackId], references: [id])
+
+  @@index([partyId, position])
+  @@index([trackId])
+  @@map("party_queue_items")
+}
+
+model MysticProfile {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String   @unique @map("user_id") @db.Uuid
+  photos             String[] @default([])
+  bio                String?
+  interests          String[] @default([])
+  zodiac             String?
+  birthDate          DateTime? @map("birth_date")
+  lifePathNumber     Int?     @map("life_path_number")
+  compatibilityData  Json?    @map("compatibility_data")
+  gender             MysticGender?
+  lookingFor         MysticGender? @map("looking_for")
+  location           String?
+  latitude           Float?
+  longitude          Float?
+  religion           String?
+  preferences        Json?
+  distancePreference Int      @default(100) @map("distance_preference")
+  isBanned           Boolean  @default(false) @map("is_banned")
+  deviceFingerprint  String?  @map("device_fingerprint")
+  lastKnownIp        String?  @map("last_known_ip")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  matchesAsProfile1  MysticMatch[] @relation("Profile1Matches")
+  matchesAsProfile2  MysticMatch[] @relation("Profile2Matches")
+  likesSent          MysticLike[]  @relation("LikeSender")
+  likesReceived      MysticLike[]  @relation("LikeReceiver")
+  passesSent         MysticPass[]  @relation("PassSender")
+  passesReceived     MysticPass[]  @relation("PassReceiver")
+  // Block feature
+  blockedProfiles    MysticBlock[] @relation("MysticBlocks")
+  blockedByProfiles  MysticBlock[] @relation("BlockedByProfiles")
+
+  @@index([deviceFingerprint])
+  @@index([lastKnownIp])
+  @@map("mystic_profiles")
+}
+
+model MysticLike {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  senderId       String        @map("sender_id") @db.Uuid
+  receiverId     String        @map("receiver_id") @db.Uuid
+  createdAt      DateTime      @default(now()) @map("created_at")
+  sender         MysticProfile @relation("LikeSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver       MysticProfile @relation("LikeReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([senderId, receiverId])
+  @@index([senderId])
+  @@index([receiverId])
+  @@map("mystic_likes")
+}
+
+model MysticPass {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  senderId       String        @map("sender_id") @db.Uuid
+  receiverId     String        @map("receiver_id") @db.Uuid
+  createdAt      DateTime      @default(now()) @map("created_at")
+  sender         MysticProfile @relation("PassSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver       MysticProfile @relation("PassReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([senderId, receiverId])
+  @@index([senderId])
+  @@index([receiverId])
+  @@map("mystic_passes")
+}
+
+model DailyOracle {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  cardId    String   @map("card_id")
+  name      String
+  meaning   String   @db.Text
+  message   String   @db.Text
+  trackId   String?  @map("track_id") @db.Uuid
+  date      String   // ISO date string YYYY-MM-DD
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  track     Track?   @relation(fields: [trackId], references: [id], onDelete: SetNull)
+
+  @@index([userId, date])
+  @@map("daily_oracles")
+}
+
+model MysticMatch {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  profile1Id    String              @map("profile_1_id") @db.Uuid
+  profile2Id    String              @map("profile_2_id") @db.Uuid
+  compatibility Float
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+  profile1      MysticProfile       @relation("Profile1Matches", fields: [profile1Id], references: [id], onDelete: Cascade)
+  profile2      MysticProfile       @relation("Profile2Matches", fields: [profile2Id], references: [id], onDelete: Cascade)
+  conversation  MysticConversation?
+
+  @@unique([profile1Id, profile2Id])
+  @@index([profile1Id])
+  @@index([profile2Id])
+  @@map("mystic_matches")
+}
+
+model MysticConversation {
+  id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  matchId   String          @unique @map("match_id") @db.Uuid
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+  match     MysticMatch     @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  messages  MysticMessage[]
+
+  @@map("mystic_conversations")
+}
+
+model MysticMessage {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String             @map("conversation_id") @db.Uuid
+  senderId       String             @map("sender_id") @db.Uuid
+  content        String             @db.Text
+  iv             String?            // Initialization Vector for E2E encryption
+  type           String             @default("text")
+  isRead         Boolean            @default(false) @map("is_read")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  conversation   MysticConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User               @relation(fields: [senderId], references: [id])
+
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@map("mystic_messages")
+}
+
+// Block feature for Direct Messages (User blocks another User from messaging)
+model UserBlock {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  blockerId   String   @map("blocker_id") @db.Uuid
+  blockedId   String   @map("blocked_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  blocker     User     @relation("UserBlocks", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked     User     @relation("BlockedByUsers", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+  @@index([blockedId])
+  @@map("user_blocks")
+}
+
+// Block feature for Mystic Chat (MysticProfile blocks another MysticProfile)
+model MysticBlock {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  blockerProfileId String        @map("blocker_profile_id") @db.Uuid
+  blockedProfileId String        @map("blocked_profile_id") @db.Uuid
+  createdAt        DateTime      @default(now()) @map("created_at")
+  blocker          MysticProfile @relation("MysticBlocks", fields: [blockerProfileId], references: [id], onDelete: Cascade)
+  blocked          MysticProfile @relation("BlockedByProfiles", fields: [blockedProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerProfileId, blockedProfileId])
+  @@index([blockerProfileId])
+  @@index([blockedProfileId])
+  @@map("mystic_blocks")
+}
+
+model Report {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reporterId  String           @map("reporter_id") @db.Uuid
+  targetType  ReportTargetType @map("target_type")
+  targetId    String           @map("target_id") @db.Uuid
+  reason      String
+  content     String?          @db.Text
+  subjectId   String?          @map("subject_id") @db.Uuid
+  status      ReportStatus @default(OPEN)
+  action      ReportAction @default(NONE)
+  adminNotes  String?          @map("admin_notes") @db.Text
+  resolvedAt  DateTime?        @map("resolved_at")
+  resolvedBy  String?          @map("resolved_by") @db.Uuid
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  
+  reporter    User             @relation("UserReportsSent", fields: [reporterId], references: [id])
+  subject     User?            @relation("UserReportsReceived", fields: [subjectId], references: [id])
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([targetType, targetId])
+  @@map("reports")
+}
+
+enum TokenType {
+  EMAIL_VERIFY
+  PASSWORD_RESET
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+  EXPIRED
+  REFUNDED
+}
+
+enum Role {
+  USER
+  ARTIST
+  STAFF
+  ADMIN
+  SUPERADMIN
+}
+
+enum ArtistStatus {
+  PENDING
+  NEEDS_INFO
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum TrackStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PUBLISHED
+  HIDDEN
+}
+
+enum ReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+enum ReportAction {
+  NONE
+  WARN
+  REMOVE
+  BAN
+}
+
+enum CopyrightClaimType {
+  AUDIO_MATCH
+  LYRICS_MATCH
+  MELODY_MATCH
+  MANUAL_CLAIM
+}
+
+enum CopyrightStatus {
+  PENDING
+  UNDER_REVIEW
+  DISPUTE_IN_PROGRESS
+  RESOLVED
+  DISMISSED
+}
+
+enum ConversationStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum NotificationType {
+  WELCOME
+  COMMENT_REPLY
+  ADMIN_BROADCAST
+  ARTIST_WELCOME
+  NEW_COMMENT
+  NEW_USER
+  ARTIST_REQUEST
+  PENDING_TRACK
+  DEPOSIT_REQUEST
+  LICENSE_PURCHASED
+  LICENSE_SOLD
+  ACCOUNT_WARNING
+  SERVICE_INCIDENT
+  INCIDENT_UPDATE
+  MYSTIC_LIKE
+  MYSTIC_MATCH
+}
+
+enum ServiceStatus {
+  OPERATIONAL
+  DEGRADED
+  PARTIAL_OUTAGE
+  MAJOR_OUTAGE
+  MAINTENANCE
+}
+
+enum IncidentStatus {
+  INVESTIGATING
+  IDENTIFIED
+  MONITORING
+  RESOLVED
+}
+
+enum IncidentImpact {
+  NONE
+  MINOR
+  MAJOR
+  CRITICAL
+}
+
+enum EmailStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum BannerStatus {
+  ACTIVE
+  HIDDEN
+  CLOSED
+}
+
+enum PricingType {
+  FREE
+  FOR_SALE
+}
+
+enum LicenseType {
+  PERSONAL
+  CONTENT_CREATOR
+  COMMERCIAL_BASIC
+  COMMERCIAL_PRO
+  EXCLUSIVE
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REJECTED
+  CANCELLED
+}
+
+enum WalletTxType {
+  DEPOSIT
+  PURCHASE
+  REFUND
+  BONUS
+  DONATE
+}
+
+enum WalletTxStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum DepositStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum PaymentMethodType {
+  BANK_TRANSFER
+  PAYPAL
+}
+
+enum UrlScanStatus {
+  PENDING_SCAN
+  SAFE
+  UNSAFE
+  UNKNOWN
+}
+
+enum SandboxStatus {
+  ACTIVE
+  FINISHED
+  FAILED
+}
+
+enum ReportTargetType {
+  TRACK
+  ARTIST
+  COMMENT
+  USER
+}
+
+enum MysticGender {
+  MAN
+  WOMAN
+  OTHER
+}
