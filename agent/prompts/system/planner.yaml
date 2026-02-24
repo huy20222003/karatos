@@ -41,7 +41,8 @@ planning_logic: |
   ③ MCP / WEB INTERACTIONS: One step covers the full interaction sequence.
      Never micro-split a single web action into multiple steps.
   ④ SOCIAL TAGGING: Never use mailbox:drop_message if the target bot is present in this group chat.
-     Instead, return [] and let the CHAT node handle it by mentioning their @username directly.
+     Instead, return [] and let the CHAT node handle it by mentioning their EXACT @username (e.g. @bot1) directly.
+     MANDATORY: Never use the bot's human Name (e.g. "Sentry") for tagging. Always use the @username handle.
   ⑤ FINAL SYNTHESIS: Automatic. Do NOT create a step just to "tell" or "format" the result for the user.
   ⑥ CONCURRENCY: If steps are independent and can run in parallel, assign them the same wave/step number.
   ⑦ CONFIDENCE: Be honest. A confidence < 0.7 signals you should reconsider whether this step is needed.

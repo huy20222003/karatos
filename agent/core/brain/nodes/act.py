@@ -51,8 +51,11 @@ async def chat_act_node(state: ChatState) -> ChatState:
             continue
 
         # Validate Task
-        if skill_name == "none" or skill_name == "reply_directly":
-            logger.warning(f"[NEURAL_ACT] Skipping invalid task: Skill={skill_name}")
+        if skill_name in ["none", "reply_directly", "ignore"]:
+            if d.get("override"):
+                logger.info(f"[NEURAL_ACT] Action suppressed by Critic: {d.get('original_action')} -> {skill_name}")
+            else:
+                 logger.warning(f"[NEURAL_ACT] Skipping invalid task: Skill={skill_name}")
             tasks.append(asyncio.sleep(0, result=None)) 
             continue 
             
@@ -68,16 +71,14 @@ async def chat_act_node(state: ChatState) -> ChatState:
             alert_msg = f"🚨 **INTERNAL ALERT**:\nTarget: {target_id}\nAction blocked: {original_action}\nReason: {reason}"
             logger.warning(alert_msg)
             
-            # Send Telegram notification if available
+            # Send notification via Centralized Manager (Phase 24)
             try:
-                from channels.telegram import get_telegram_channel
-                telegram = get_telegram_channel()
-                if telegram:
-                    await telegram.send_notification(
-                        title="CRITIC ALERT" if safe_skill == "alert" else "SYSTEM ALERT",
-                        body=f"Target: {target_id}\nAction: {original_action}\nReason: {reason}",
-                        severity="critical" if safe_skill == "alert" else "warning"
-                    )
+                from utils.notification import NotificationManager
+                await NotificationManager.send_alert(
+                    title="CRITIC ALERT" if safe_skill == "alert" else "SYSTEM ALERT",
+                    body=f"Target: {target_id}\nAction: {original_action}\nReason: {reason}",
+                    severity="critical" if safe_skill == "alert" else "warning"
+                )
             except Exception as e:
                 logger.error(f"[NEURAL_ACT] Failed to send alert notification: {e}")
             
@@ -107,13 +108,14 @@ async def chat_act_node(state: ChatState) -> ChatState:
             if results_to_cache := result:
                 cache[cache_key] = results_to_cache
             
-            # --- CLI Approval Flow ---
+            # --- CLI Approval Flow (Phase 24: Centralized Notification) ---
             if isinstance(result, dict) and result.get("status") == "pending" and result.get("message") == "APPROVAL_REQUIRED":
-                from channels.telegram import get_telegram_channel
-                telegram = get_telegram_channel()
-                if telegram:
-                    logger.info(f"[NEURAL_ACT] Triggering CLI approval via Telegram for: {result.get('command')}")
-                    await telegram.request_cli_approval(result.get("command"), result.get("details", "Nghi ngờ bảo mật"))
+                from utils.notification import NotificationManager
+                logger.info(f"[NEURAL_ACT] Triggering centralized CLI approval for: {result.get('command')}")
+                await NotificationManager.request_approval(
+                    command=result.get("command"), 
+                    reason=result.get("details", "Nghi ngờ bảo mật")
+                )
             # --------------------------
 
         else:
@@ -123,10 +125,11 @@ async def chat_act_node(state: ChatState) -> ChatState:
             # Check for any pending actions in parallel execution
             for r in result:
                 if isinstance(r, dict) and r.get("status") == "pending" and r.get("message") == "APPROVAL_REQUIRED":
-                    from channels.telegram import get_telegram_channel
-                    telegram = get_telegram_channel()
-                    if telegram:
-                        await telegram.request_cli_approval(r.get("command"), r.get("details", "Nghi ngờ bảo mật"))
+                    from utils.notification import NotificationManager
+                    await NotificationManager.request_approval(
+                        command=r.get("command"), 
+                        reason=r.get("details", "Nghi ngờ bảo mật")
+                    )
             
         state["action_result"] = result
         state["context"]["tool_cache"] = cache

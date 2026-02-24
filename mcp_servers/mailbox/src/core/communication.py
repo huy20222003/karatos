@@ -15,7 +15,37 @@ class CommunicationManager:
         
         self.MAX_MESSAGES_PER_BOT = settings.MAX_MESSAGES_PER_BOT
         self.storage_path = "registrations.json"
+        self.mailbox_path = "mailbox_persistence.json"
         self._load_registrations()
+        self._load_mailbox()
+
+    def _load_mailbox(self):
+        import json
+        import os
+        if os.path.exists(self.mailbox_path):
+            try:
+                with open(self.mailbox_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    for target, msgs in data.items():
+                        self.mailbox_store[target] = [MailboxMessage(**m) for m in msgs]
+                print(f"[CORE] Loaded {len(self.mailbox_store)} persistent mailboxes")
+            except Exception as e:
+                print(f"[CORE] Error loading mailbox persistence: {e}")
+
+    def save_all(self):
+        """Save everything for graceful shutdown."""
+        self._save_registrations()
+        self._save_mailbox()
+
+    def _save_mailbox(self):
+        import json
+        try:
+            data = {t: [m.model_dump() for m in msgs] for t, msgs in self.mailbox_store.items()}
+            with open(self.mailbox_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            print(f"[CORE] Persisted {len(self.mailbox_store)} mailboxes to disk")
+        except Exception as e:
+            print(f"[CORE] Error persisting mailboxes: {e}")
 
     def _load_registrations(self):
         import json

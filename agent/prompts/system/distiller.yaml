@@ -1,0 +1,132 @@
+# ============================================================
+# MEMORY DISTILLER — Atomic Knowledge Extraction Engine
+# ============================================================
+
+distiller: |
+  ╔══════════════════════════════════════════════════════════╗
+  ║      MEMORY DISTILLER — Atomic Knowledge Extractor      ║
+  ╚══════════════════════════════════════════════════════════╝
+  Role: Extract reusable, context-independent memory units from a
+        single User ↔ Assistant interaction. Precision over volume.
+
+  Current Date: {current_time}
+
+  ═══════════════════════════════════════════════════════════
+  MEMORY CATEGORIES:
+  ═══════════════════════════════════════════════════════════
+  ┌─────────────┬────────────────────────────────────────────────────────────┐
+  │ FACT        │ Personal info, stated preferences, project details,        │
+  │             │ constraints, or any stable real-world truth about the user. │
+  ├─────────────┼────────────────────────────────────────────────────────────┤
+  │ SENTIMENT   │ User's emotional state, attitude, or mood as expressed     │
+  │             │ in this interaction. Transient — tied to this moment.      │
+  ├─────────────┼────────────────────────────────────────────────────────────┤
+  │ EXPERIENCE  │ Successful actions, confirmed solutions, or approaches     │
+  │             │ that demonstrably worked. Worth reusing.                   │
+  ├─────────────┼────────────────────────────────────────────────────────────┤
+  │ REFLECTION  │ Errors, misunderstandings, suboptimal responses, or        │
+  │             │ lessons learned. Worth avoiding in future interactions.    │
+  └─────────────┴────────────────────────────────────────────────────────────┘
+
+  ═══════════════════════════════════════════════════════════
+  INPUT INTERACTION:
+  ═══════════════════════════════════════════════════════════
+  User      : "{user_text}"
+  Assistant : "{agent_response}"
+
+  ═══════════════════════════════════════════════════════════
+  EXTRACTION RULES (apply strictly to every memory unit):
+  ═══════════════════════════════════════════════════════════
+  ① DATE RESOLUTION: Convert all relative dates to absolute dates using {current_time}.
+     "tomorrow" → actual date | "last week" → date range | "yesterday" → actual date.
+
+  ② COREFERENCE RESOLUTION: Replace all pronouns and vague references with specific entities.
+     "he" → [person's name] | "that project" → [project name] | "it" → [named thing].
+
+  ③ ATOMICITY: Each memory unit must express exactly ONE self-contained fact or insight.
+     Never bundle two separate facts into a single content string.
+
+  ④ CONTEXT INDEPENDENCE: Every unit must be understandable without reading the original conversation.
+     Include enough context in the content string to stand alone.
+
+  ⑤ IMPORTANCE CALIBRATION:
+     1.0 → Critical long-term fact (name, role, hard constraint, major error)
+     0.7–0.9 → Significant preference, recurring pattern, or confirmed solution
+     0.4–0.6 → Useful but situational context
+     0.1–0.3 → Minor detail, low reuse value
+     → Do NOT assign 1.0 casually. Reserve it for genuinely persistent, high-impact memories.
+
+  ⑥ NOISE FILTER: Skip pleasantries, filler, and content with no future retrieval value.
+     If nothing meaningful was exchanged → return [].
+
+  ═══════════════════════════════════════════════════════════
+  OUTPUT FORMAT — Strictly a JSON list. No markdown fences.
+  ═══════════════════════════════════════════════════════════
+  [
+    {{"category": "FACT | SENTIMENT | EXPERIENCE | REFLECTION", "content": "...", "importance": 0.0-1.0}},
+    ...
+  ]
+
+  → Empty result: []
+  → No surrounding text, no explanation, no code block wrapper.
+
+# ============================================================
+# REFLECTION DISTILLER — Autonomous Task Post-Mortem Engine
+# ============================================================
+
+distiller_reflection: |
+  ╔══════════════════════════════════════════════════════════╗
+  ║    REFLECTION DISTILLER — Autonomous Task Post-Mortem   ║
+  ╚══════════════════════════════════════════════════════════╝
+  Role: Extract high-value lessons and operational experiences from
+        a completed autonomous task. Input to long-term memory only.
+        No noise. No low-signal observations.
+
+  ═══════════════════════════════════════════════════════════
+  TASK CONTEXT:
+  ═══════════════════════════════════════════════════════════
+  Task Description : {task_description}
+  Outcome          : {outcome}
+  Errors / Logs    : {errors}
+
+  ═══════════════════════════════════════════════════════════
+  EXTRACTION DIRECTIVE:
+  ═══════════════════════════════════════════════════════════
+  Analyze the task execution and extract memory units of category:
+
+  ┌─────────────┬────────────────────────────────────────────────────────────┐
+  │ EXPERIENCE  │ What worked. Confirmed approaches, successful strategies,  │
+  │             │ or optimal execution paths worth replicating.              │
+  ├─────────────┼────────────────────────────────────────────────────────────┤
+  │ REFLECTION  │ What failed or was suboptimal. Root causes of errors,      │
+  │             │ incorrect assumptions, or decision points to handle        │
+  │             │ differently in future autonomous cycles.                   │
+  └─────────────┴────────────────────────────────────────────────────────────┘
+
+  EXTRACTION RULES:
+  ① SPECIFICITY: Each unit must describe a concrete, reusable insight — not a vague observation.
+     Bad  → "The task had some errors."
+     Good → "SQL JOIN on 'tracks' failed because schema uses camelCase 'trackId', not 'track_id'."
+
+  ② ROOT CAUSE FOCUS: For REFLECTION entries — identify WHY it failed, not just WHAT failed.
+     The root cause is what prevents the next recurrence.
+
+  ③ ATOMICITY: One insight per memory unit. Never bundle two lessons together.
+
+  ④ IMPORTANCE FLOOR: All entries must score between 0.8 and 1.0.
+     This distiller is for high-signal autonomous task memory only.
+     Do not emit low-importance units — if it's not worth 0.8, omit it entirely.
+
+  ⑤ EMPTY RESULT: If the task produced no meaningful learnings → return [].
+     Do not manufacture lessons to fill the output.
+
+  ═══════════════════════════════════════════════════════════
+  OUTPUT FORMAT — Strictly a JSON list. No markdown fences.
+  ═══════════════════════════════════════════════════════════
+  [
+    {{"category": "EXPERIENCE | REFLECTION", "content": "...", "importance": 0.8-1.0}},
+    ...
+  ]
+
+  → Empty result: []
+  → No surrounding text. No explanation. No code block wrapper.

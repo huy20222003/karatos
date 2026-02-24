@@ -1,8 +1,11 @@
+import os
 import functools
 import time
 import json
+import hashlib
+from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Any, Optional, Callable
+from typing import Any, Optional, Callable, Dict, Union
 
 def retry(max_attempts: int = 3, delay: float = 1.0, backoff: float = 2.0, exceptions: tuple = (Exception,)):
     """
@@ -30,9 +33,38 @@ def retry(max_attempts: int = 3, delay: float = 1.0, backoff: float = 2.0, excep
     return decorator
 
 
-def format_timestamp(dt: datetime, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
-    """Format a datetime object to string"""
+def format_timestamp(dt: Union[datetime, str], fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
+    """Format a datetime object OR string to a standard string format"""
+    if isinstance(dt, str):
+        parsed = parse_timestamp(dt)
+        return parsed.strftime(fmt) if parsed else dt
     return dt.strftime(fmt)
+
+
+def safe_timestamp_convert(val: Any) -> datetime:
+    """Safely convert any value (str, float, int) to datetime"""
+    if isinstance(val, datetime):
+        return val
+    if isinstance(val, (int, float)):
+        return datetime.fromtimestamp(val)
+    if isinstance(val, str):
+        parsed = parse_timestamp(val)
+        return parsed if parsed else datetime.utcnow()
+    return datetime.utcnow()
+
+
+def resolve_path(path_str: str) -> Path:
+    """
+    Resolve a path relative to the project root.
+    If path is absolute, returns it as Path object.
+    """
+    path = Path(path_str)
+    if path.is_absolute():
+        return path
+    
+    # Assuming app root is one level up from utils/
+    root_dir = Path(__file__).parent.parent
+    return root_dir / path_str
 
 
 def parse_timestamp(timestamp_str: str) -> Optional[datetime]:
@@ -134,9 +166,6 @@ from contextlib import contextmanager
 def task_timer(name: str):
     """
     Context manager to time a task.
-    Usage:
-        with task_timer("Analysis"):
-            do_something()
     """
     start = time.perf_counter()
     from utils.logger import get_logger
@@ -146,3 +175,16 @@ def task_timer(name: str):
     finally:
         elapsed = time.perf_counter() - start
         logger.info(f"[PERF] {name} took {elapsed:.3f}s")
+
+
+def memoize(func: Callable):
+    """Simple in-memory cache decorator for expensive functions"""
+    cache = {}
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        # Create a stable key from arguments
+        key = f"{func.__name__}:{hashlib.md5(str(args).encode()).hexdigest()}:{hashlib.md5(str(kwargs).encode()).hexdigest()}"
+        if key not in cache:
+            cache[key] = func(*args, **kwargs)
+        return cache[key]
+    return wrapper

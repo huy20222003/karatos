@@ -58,6 +58,9 @@ class ChatState(TypedDict):
     needs_planning: bool           # Whether multi-step planning is required
     cycle_complete: bool
     is_fast_track: bool            # Brain 2.0: Reflex Mode flag
+    confidence: float              # Phase 21.1: Brain's current confidence in the interaction
+    processed: Optional[Any]       # Metadata from InputPipeline
+
 
     # Brain 3.0: Dynamic Persona
     mood: str

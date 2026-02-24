@@ -7,38 +7,80 @@ from utils.logger import get_logger
 
 logger = get_logger()
 
+from langchain_core.language_models.chat_models import BaseChatModel
+
 class SharedModelProvider:
-    _instance: Optional[ChatOllama] = None
+    _instance: Optional[BaseChatModel] = None
 
     @classmethod
-    def get_model(cls) -> ChatOllama:
+    def get_model(cls) -> BaseChatModel:
         if cls._instance is None:
-            from .hardware import HardwareEngine
+            provider = settings.llm_provider.lower()
             
-            # Dynamic Calibration (Stabilized for OS Health)
-            threads = HardwareEngine.get_optimal_threads()
-            ctx_size = HardwareEngine.get_optimal_context_size()
+            if provider == "ollama":
+                from langchain_ollama import ChatOllama
+                from .hardware import HardwareEngine
+                
+                # Dynamic Calibration (Specific to Local Ollama)
+                threads = HardwareEngine.get_optimal_threads()
+                ctx_size = HardwareEngine.get_optimal_context_size()
+                
+                logger.info(f"[MODEL_PROVIDER] Initializing Ollama: Model={settings.ollama_model_name}, Threads={threads}, Context={ctx_size}")
+                
+                cls._instance = ChatOllama(
+                    base_url=settings.ollama_base_url,
+                    model=settings.ollama_model_name,
+                    temperature=settings.model_temperature,
+                    num_ctx=ctx_size,
+                    num_thread=threads,
+                    num_predict=settings.model_max_tokens,
+                    timeout=60.0,
+                    additional_kwargs={
+                        "num_parallel": settings.model_parallelism, 
+                        "num_gpu": 1 if os.environ.get("USE_GPU", "true") == "true" else 0,
+                        "keep_alive": "6h",
+                        "stop": ["<|im_start|>", "<|im_end|>", "<|endoftext|>"]
+                    },
+                    client_kwargs={"headers": settings.ollama_headers}
+                )
             
-            logger.info(f"[MODEL_PROVIDER] Initializing Calibration: Threads={threads}, Context={ctx_size}")
+            elif provider == "openai":
+                from langchain_openai import ChatOpenAI
+                logger.info(f"[MODEL_PROVIDER] Initializing OpenAI Compatible: Model={settings.openai_model_name}")
+                cls._instance = ChatOpenAI(
+                    api_key=settings.openai_api_key,
+                    base_url=settings.openai_api_base,
+                    model=settings.openai_model_name,
+                    temperature=settings.model_temperature,
+                    max_tokens=settings.model_max_tokens,
+                    timeout=60.0
+                )
             
-            cls._instance = ChatOllama(
-                base_url=settings.ollama_base_url,
-                model=settings.ollama_model_name,
-                temperature=settings.model_temperature,
-                num_ctx=ctx_size,
-                num_thread=threads,
-                num_predict=settings.model_max_tokens,
-                # Optimization flags
-                timeout=60.0,
-                additional_kwargs={
-                    "num_parallel": settings.model_parallelism, 
-                    "num_gpu": 1 if os.environ.get("USE_GPU", "true") == "true" else 0,
-                    "keep_alive": "6h", # Keep model in memory for 6 hours
-                    "stop": ["<|im_start|>", "<|im_end|>", "<|endoftext|>"]
-                },
-                client_kwargs={"headers": settings.ollama_headers}
-            )
-            logger.info(f"[MODEL_DEBUG] Model configured with: threads={threads}, ctx={ctx_size}, parallel={settings.model_parallelism}")
+            elif provider == "anthropic":
+                from langchain_anthropic import ChatAnthropic
+                logger.info(f"[MODEL_PROVIDER] Initializing Anthropic: Model={settings.anthropic_model_name}")
+                cls._instance = ChatAnthropic(
+                    api_key=settings.anthropic_api_key,
+                    model=settings.anthropic_model_name,
+                    temperature=settings.model_temperature,
+                    max_tokens=settings.model_max_tokens,
+                    timeout=60.0
+                )
+            
+            elif provider == "groq":
+                from langchain_groq import ChatGroq
+                logger.info(f"[MODEL_PROVIDER] Initializing Groq: Model={settings.groq_model_name}")
+                cls._instance = ChatGroq(
+                    api_key=settings.groq_api_key,
+                    model=settings.groq_model_name,
+                    temperature=settings.model_temperature,
+                    max_tokens=settings.model_max_tokens,
+                    timeout=60.0
+                )
+            else:
+                raise ValueError(f"Unsupported LLM provider: {provider}")
+
+            logger.info(f"[MODEL_PROVIDER] Provider '{provider}' initialized successfully.")
         return cls._instance
 
     _warmed: bool = False

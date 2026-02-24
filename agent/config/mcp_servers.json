@@ -27,7 +27,7 @@
             ]
         },
         "mailbox": {
-            "command": "http://localhost:8000/sse"
+            "command": "http://127.0.0.1:8000/sse"
         }
     }
 }

@@ -22,6 +22,15 @@ class Settings(BaseSettings):
     )
     
     # ===========================================
+    # LLM Provider Selection
+    # ===========================================
+    llm_provider: str = Field(
+        default="ollama",
+        description="LLM Provider to use (ollama, openai, anthropic, groq)",
+        alias="LLM_PROVIDER"
+    )
+
+    # ===========================================
     # LLM Model Configuration (Ollama)
     # ===========================================
     ollama_base_url: str = Field(
@@ -67,6 +76,53 @@ class Settings(BaseSettings):
         description="Custom headers for all Ollama requests",
         alias="OLLAMA_HEADERS"
     )
+
+    # ===========================================
+    # OpenAI & Compatible Providers
+    # ===========================================
+    openai_api_key: Optional[str] = Field(
+        default=None,
+        description="API Key for OpenAI or compatible provider",
+        alias="OPENAI_API_KEY"
+    )
+    openai_api_base: Optional[str] = Field(
+        default="https://api.openai.com/v1",
+        description="Base URL for OpenAI or compatible API (DeepSeek, etc.)",
+        alias="OPENAI_API_BASE"
+    )
+    openai_model_name: str = Field(
+        default="gpt-4o",
+        description="Model name to use with OpenAI or compatible provider",
+        alias="OPENAI_MODEL_NAME"
+    )
+
+    # ===========================================
+    # Anthropic Configuration
+    # ===========================================
+    anthropic_api_key: Optional[str] = Field(
+        default=None,
+        description="API Key for Anthropic",
+        alias="ANTHROPIC_API_KEY"
+    )
+    anthropic_model_name: str = Field(
+        default="claude-3-5-sonnet-latest",
+        description="Model name for Anthropic",
+        alias="ANTHROPIC_MODEL_NAME"
+    )
+
+    # ===========================================
+    # Groq Configuration
+    # ===========================================
+    groq_api_key: Optional[str] = Field(
+        default=None,
+        description="API Key for Groq",
+        alias="GROQ_API_KEY"
+    )
+    groq_model_name: str = Field(
+        default="llama-3.3-70b-versatile",
+        description="Model name for Groq",
+        alias="GROQ_MODEL_NAME"
+    )
     # ===========================================
     # Agent Behavior Configuration
     # ===========================================
@@ -105,26 +161,24 @@ class Settings(BaseSettings):
         description="Enable/disable the brain's natural social drive",
         alias="SOCIAL_PULSE_ENABLED"
     )
+    social_pulse_chance: float = Field(
+        default=0.1,
+        description="Probability of triggering a social impulse (0.0 to 1.0)",
+        alias="SOCIAL_PULSE_CHANCE"
+    )
     
-    # ===========================================
-    # A2A Security Configuration (DEPRECATED: Incoming Gateway Removed)
-    # ===========================================
-    # a2a_security_level: str = Field(
-    #     default="CONFIRM", # STRICT, CONFIRM, OPEN
-    #     description="Security level for inter-agent communication",
-    #     alias="A2A_SECURITY_LEVEL"
-    # )
-    # a2a_bridge_port: int = Field(
-    #     default=8090,
-    #     description="Port for the A2A Bridge server",
-    #     alias="A2A_BRIDGE_PORT"
-    # )
-    # allowed_agents: list = Field(
-    #     default_factory=list,
-    #     description="List of explicitly trusted Agent IDs or URLs",
-    #     alias="ALLOWED_AGENTS"
-    # )
-    
+    # --- Context Limits (Phase 21.5) ---
+    context_planning_limit: int = Field(
+        default=5,
+        description="Number of recent messages used for routing and planning",
+        alias="CONTEXT_PLANNING_LIMIT"
+    )
+    context_generation_limit: int = Field(
+        default=100,
+        description="Number of recent messages used for final response generation",
+        alias="CONTEXT_GENERATION_LIMIT"
+    )
+
     # ===========================================
     # MCP Configuration
     # ===========================================
@@ -133,11 +187,16 @@ class Settings(BaseSettings):
         description="Path to JSON file containing MCP server definitions",
         alias="MCP_CONFIG_PATH"
     )
-    
     mcp_servers: dict = Field(
         default_factory=dict,
         description="Configuration for MCP Servers (command, args, env)",
         alias="MCP_SERVERS"
+    )
+    
+    mailbox_auth_token: str = Field(
+        default="niva-mailbox-dev-token-2026",
+        description="Authentication token for the Mailbox MCP server",
+        alias="MAILBOX_AUTH_TOKEN"
     )
     
     # ===========================================

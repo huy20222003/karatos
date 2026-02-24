@@ -86,10 +86,10 @@ async def chat_observe_node(state: ChatState) -> ChatState:
             # Use utility for compression (Phase 27 Associative Cog)
             compressed_text = await ctx_manager.compress_large_context(history_text_for_size, model, p_registry, query=msg)
             
-            # Replace old history with summary + last 5 messages
+            # Replace old history with summary + last N messages
             compressed_history = [
                 {"role": "system", "content": compressed_text}
-            ] + history[-5:]
+            ] + history[-settings.context_planning_limit:]
             history = compressed_history
             logger.info("[NGO] Neural Compression complete. Context window optimized.")
         

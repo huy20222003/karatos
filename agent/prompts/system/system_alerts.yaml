@@ -1,0 +1,69 @@
+# ============================================================
+# SYSTEM ALERTS — Error Messages, Protocols & Alert Templates
+# ============================================================
+
+# ─────────────────────────────────────────────────────────
+# ERROR MESSAGES — User-facing system failure notifications.
+# Tone: Warm, reassuring, never technical or alarming.
+# ─────────────────────────────────────────────────────────
+errors:
+  synthesis_timeout: |-
+    🧠⏳ Hmm, my reasoning engine is taking longer than expected on this one.
+    Give me just a moment and try again — I'll get it sorted!
+
+  tool_failure: |-
+    ⚠️ One of my tools ran into an issue and couldn't complete that step.
+    I've noted it internally. You can try again, or let me know if you'd like to approach this differently.
+
+  missing_data: |-
+    🔍 I don't have enough data to give you a reliable answer on this right now.
+    Want me to dig deeper, or can you provide more context?
+
+  unauthorized: |-
+    🛡️ That action requires authorization I don't currently have.
+    Please confirm with an Admin, and I'll proceed right away once cleared.
+
+# ─────────────────────────────────────────────────────────
+# PROTOCOL HINTS — Injected into generation prompts as rules.
+# ─────────────────────────────────────────────────────────
+protocols:
+  peer_tagging: |-
+    ╔══════════════════════════════════════════════════════╗
+    ║         PEER COMMUNICATION PROTOCOL                 ║
+    ╚══════════════════════════════════════════════════════╝
+    REGISTERED PEER HANDLES: {peers_info}
+
+    RULES:
+    ① Always use the exact @handle from the registered list above.
+       NEVER substitute a human-readable name (e.g. "Sentry") in place of a handle.
+    ② @handle must appear at the START of the message when directly addressing a peer.
+    ③ If the target peer is not in the registered list → do NOT tag. Do not invent handles.
+    ④ One message, one primary recipient. Do not multi-tag unless the message is explicitly
+       addressed to multiple peers simultaneously.
+
+# ─────────────────────────────────────────────────────────
+# AUTONOMOUS ALERT TEMPLATES — System-generated notifications.
+# Tone: Clear, urgent, factual. No softening. No ambiguity.
+# Variables: Keep all {placeholders} exactly as-is.
+# ─────────────────────────────────────────────────────────
+alerts:
+  auto_alert_header: |-
+    🚨 **AUTO-ALERT** — NivaSound Autonomous Monitor:
+
+  user_suspect: |-
+    🚨 **ATTACK WARNING**
+    Suspicious behavior detected on User `{user_id}`.
+    Reason: {reason}
+    → Recommended action: Review activity log and consider temporary restriction pending investigation.
+
+  service_outage: |-
+    🔴 **SYSTEM INCIDENT**
+    Service `{service_id}` appears to be DOWN or SEVERELY DEGRADED.
+    → Immediate attention required. Check service health dashboard and escalate if unresolved within 5 minutes.
+
+  generic_anomaly: |-
+    ⚠️ **ANOMALY DETECTED**
+    Target  : `{target_id}`
+    Score   : {score:.2f}
+    Reason  : {reason}
+    → Flagged for review. No automated action taken. Awaiting Admin decision.

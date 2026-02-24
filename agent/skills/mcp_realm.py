@@ -72,8 +72,13 @@ class MCPRealm(BaseSkillRealm):
             
             if isinstance(params, str) and (params.startswith("http://") or params.startswith("https://")):
                 # SSE Client
+                headers = {}
+                if server_name.lower() == "mailbox":
+                    headers = {"X-Mailbox-Token": settings.mailbox_auth_token}
+                    logger.info(f"[MCP] Attaching X-Mailbox-Token for {server_name}")
+                
                 logger.info(f"[MCP] Connecting to SSE server at: {params}")
-                read, write = await stack.enter_async_context(sse_client(params))
+                read, write = await stack.enter_async_context(sse_client(params, headers=headers))
             else:
                 # Stdio Client
                 logger.info(f"[MCP] Starting stdio client for: {server_name}")
@@ -101,6 +106,11 @@ class MCPRealm(BaseSkillRealm):
             data = self.active_sessions.pop(server_name)
             try:
                 await data['stack'].aclose()
+            except RuntimeError as re:
+                if "cancel scope" in str(re):
+                    logger.debug(f"[MCP] Cancel scope mismatch for {server_name} during closure (expected on task mismatch)")
+                else:
+                    logger.warning(f"[MCP] Error closing session {server_name}: {re}")
             except Exception as e:
                 logger.warning(f"[MCP] Error closing session {server_name}: {e}")
 

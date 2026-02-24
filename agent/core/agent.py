@@ -12,6 +12,7 @@ from config.settings import settings
 from utils.logger import get_logger
 from .brain import Brain
 from .queue import LaneQueue, get_queue, QueuedAction
+from .input_pipeline import InputPipeline, ProcessedInput
 from memory.persistent import get_memory, MemoryCategory
 from memory.short_term import ShortTermMemory
 
@@ -41,6 +42,7 @@ class BrainAgent:
         self.memory = get_memory(base_path=self.base_storage_path)
         
         self.short_memory = ShortTermMemory() # RAM-based short-term memory
+        self.input_pipeline = InputPipeline() # Central input processor
         self.database = None  # Lazy loaded
         
         self._running = False
@@ -319,28 +321,41 @@ class BrainAgent:
         """Run a single patrol cycle (for testing)"""
         await self.patrol()
         
-    async def chat(self, message: str, chat_id: str, context: Optional[dict] = None) -> Optional[Union[str, dict]]:
+    async def chat(self, message: Union[str, ProcessedInput], chat_id: str, context: Optional[dict] = None) -> Optional[Union[str, dict]]:
         """
         Directly chat with the agent.
-        Builds a LIGHT context for speed.
+        Accepts raw string or ProcessedInput (to preserve metadata).
         """
-        # Light context for chat
+        # 1. Handle Input Type (Preserve Metadata)
+        if isinstance(message, str):
+            # Fallback for direct calls without prior pipeline processing
+            processed = await self.input_pipeline.process(
+                message, 
+                source=context.get("channel", "telegram") if context else "telegram", # Changed default source to 'telegram'
+                chat_id=chat_id
+            )
+        else:
+            processed = message
+
+        # 2. Build context
         ctx = {
             "time": datetime.utcnow().timestamp(),
-            "channel": "telegram",
+            "channel": context.get("channel", "telegram") if context else "telegram",
             "chat_id": chat_id,
             "bot_username": self.bot_username,
-            "memory": self.memory, # Critical for recall!
-            "short_memory": self.short_memory
+            "memory": self.memory,
+            "short_memory": self.short_memory,
+            "processed": processed # Passed into the Brain State
         }
         
         # Merge provided context (e.g. for testing)
         if context:
             ctx.update(context)
         
-        # Run graph-based chat
+        # 3. Run graph-based chat
         try:
-            final_state = await self.brain.chat(message, chat_id, ctx)
+            # Note: Brain.chat will now use ctx["processed"] if available
+            final_state = await self.brain.chat(processed.clean_text, chat_id, ctx)
             
             # --- NGO FIX: Handle silent offloading (None return) ---
             if final_state is None:
@@ -385,6 +400,7 @@ class BrainAgent:
             "last_patrol": self._last_patrol.isoformat() if self._last_patrol else None,
             "actions_this_hour": self._actions_this_hour,
             "queue": self.queue.get_status(),
+            "memory": self.short_memory.get_summary() if self.short_memory else None,
             "brain": self.brain.get_stats() if self.brain else None,
             "bot_username": self.bot_username
         }

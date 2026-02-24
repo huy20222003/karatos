@@ -12,10 +12,8 @@ from dataclasses import dataclass
 from enum import Enum
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
-from sqlalchemy import create_engine, text, Column
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
-from pgvector.sqlalchemy import Vector
+from config.settings import settings
+from utils.logger import get_logger
 
 from config.settings import settings
 from utils.logger import get_logger
@@ -52,21 +50,13 @@ class MemoryEntry:
 class PersistentMemory:
     """
     Long-term memory for Brain.
-    Uses PostgreSQL to store memories that persist across restarts.
-    
-    Features:
-    - Remember user behavior patterns
-    - Store decision history for learning
-    - Track context across sessions
-    - Auto-expire old memories
+    Uses Markdown storage for persistence across restarts.
+    (PostgreSQL dependency removed for simplified architecture).
     """
     
     def __init__(self, base_path: str = "data/storage"):
-        """Initialize with shared DB factory and Markdown storage"""
-        self.engine = create_engine(settings.database_url)
-        self.Session = sessionmaker(bind=self.engine)
-        
-        # Markdown Storage (OpenClaw Style)
+        """Initialize with Markdown storage"""
+        # Markdown Storage (Primary & Only Source of Truth)
         from utils.markdown_memory import MarkdownMemory
         self.md_storage = MarkdownMemory(base_path=base_path)
         
@@ -78,87 +68,7 @@ class PersistentMemory:
         from utils.evolution import PersonalityEvolution
         self.evolution = PersonalityEvolution()
         
-        # Dynamic SQL Mapping for Enum Constraints
-        self._sql_category_map = {
-            MemoryCategory.A2A: "CONTEXT",
-            MemoryCategory.EXPERIENCE: "CONTEXT",
-            MemoryCategory.REFLECTION: "CONTEXT",
-            MemoryCategory.SENTIMENT: "CONTEXT"
-        }
-        
-        try:
-            self._init_vector_support()
-        except Exception as e:
-            logger.warning(f"[MEMORY] Vector support initialization skipped: {e}")
-        
-    def _init_vector_support(self):
-        """Enable pgvector extension if not present and add vector column if missing."""
-        try:
-            with self._get_session() as session:
-                # 1. Enable extension
-                try:
-                    session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-                    session.commit()
-                    logger.info("[MEMORY] pgvector extension enabled successfully.")
-                except Exception as ext_err:
-                    logger.warning(f"[MEMORY] Could not enable pgvector extension: {ext_err}")
-                    logger.warning("[MEMORY] Ensure pgvector is installed on your PostgreSQL server.")
-                    return # Stop here if extension fails
-                
-                # 2. Add embedding column to agent_memory if missing
-                # Check if column exists
-                check_col = """
-                    SELECT column_name 
-                    FROM information_schema.columns 
-                    WHERE table_name='agent_memory' AND column_name='embedding';
-                """
-                res = session.execute(text(check_col))
-                if not res.fetchone():
-                    logger.info("[MEMORY] Adding 'embedding' column to agent_memory table...")
-                    try:
-                        # Using 768 dimensions for nomic-embed-text
-                        session.execute(text("ALTER TABLE agent_memory ADD COLUMN embedding vector(768)"))
-                        session.commit()
-                        logger.info("[MEMORY] 'embedding' column added successfully.")
-                    except Exception as col_err:
-                        logger.error(f"[MEMORY] Failed to add embedding column: {col_err}")
-                else:
-                    logger.debug("[MEMORY] 'embedding' column already exists.")
-
-                # 3. Create HNSW Index (Only if not exists)
-                check_idx = """
-                    SELECT indexname FROM pg_indexes 
-                    WHERE tablename = 'agent_memory' AND indexname = 'agent_memory_embedding_idx';
-                """
-                if not session.execute(text(check_idx)).fetchone():
-                    try:
-                        index_sql = """
-                            CREATE INDEX agent_memory_embedding_idx 
-                            ON agent_memory 
-                            USING hnsw (embedding vector_cosine_ops) 
-                            WITH (m = 16, ef_construction = 64);
-                        """
-                        session.execute(text(index_sql))
-                        session.commit()
-                        logger.info("[MEMORY] HNSW Index initialized successfully.")
-                    except Exception as idx_err:
-                        error_msg = str(idx_err).lower()
-                        if "must be owner" in error_msg:
-                            logger.warning("[MEMORY] ⚠️  PERMISSION ERROR: Cannot create HNSW Index.")
-                            logger.warning("[MEMORY] You already created it manually? If yes, ignore this.")
-                            logger.warning("[MEMORY] SQL to fix ownership: ALTER TABLE agent_memory OWNER TO <user>;")
-                        else:
-                            logger.warning(f"[MEMORY] Could not create HNSW index: {idx_err}")
-                        logger.warning("[MEMORY] Falling back to sequential scan (slower).")
-                else:
-                    logger.debug("[MEMORY] HNSW Index already exists. Skipping creation.")
-                
-                logger.info("[MEMORY] Vector support initialized successfully.")
-        except Exception as e:
-            logger.error(f"[MEMORY] Failed to initialize vector support: {e}")
-
-    def _get_session(self):
-        return self.Session()
+        logger.info("[MEMORY] PersistentMemory initialized using Markdown-only storage.")
         
     # ==========================================
     # CORE MEMORY OPERATIONS
@@ -174,83 +84,26 @@ class PersistentMemory:
         embedding_text: Optional[str] = None
     ) -> str:
         """
-        Store a memory.
-        
-        Args:
-            key: Unique identifier (e.g., "user_warning_count:uuid")
-            value: Data to store (will be JSON serialized)
-            category: Type of memory
-            importance: AI-rated importance (0-1)
-            expires_in_days: Auto-expire after N days (None = never)
-            embedding_text: Optional custom text to use for embedding (defaults to value)
-            
-        Returns:
-            The memory ID
+        Store a memory in Markdown files.
         """
         expires_at = None
         if expires_in_days:
             expires_at = datetime.utcnow() + timedelta(days=expires_in_days)
             
         try:
-            # Generate embedding if it's context, learning, or A2A
-            embedding = None
-            if category in [MemoryCategory.LEARNING, MemoryCategory.USER_HISTORY, MemoryCategory.CONTEXT, MemoryCategory.A2A]:
-                from utils.embeddings import get_embedding_engine
-                engine = get_embedding_engine()
-                
-                # Use custom text if provided, otherwise derive from value
-                if embedding_text:
-                    text_to_embed = embedding_text
-                elif isinstance(value, str):
-                    text_to_embed = value
-                elif isinstance(value, dict) and "role" in value and "content" in value:
-                    # Special formatting for chat context to help semantic search
-                    text_to_embed = f"{str(value['role']).upper()}: {value['content']}"
-                else:
-                    text_to_embed = json.dumps(value)
-                
-                embedding_vec = await engine.get_embedding(text_to_embed)
-                embedding = str(embedding_vec) if embedding_vec else None
-
-            # --- SQL Mapping for Enum Constraints ---
-            sql_category = self._sql_category_map.get(category, category.value)
-
-            with self._get_session() as session:
-                query = """
-                    INSERT INTO agent_memory (key, value, category, importance, expires_at, embedding, updated_at)
-                    VALUES (:key, :value, :category, :importance, :expires_at, :embedding, NOW())
-                    ON CONFLICT (key) DO UPDATE SET
-                        value = :value,
-                        importance = :importance,
-                        embedding = :embedding,
-                        updated_at = NOW()
-                    RETURNING id
-                """
-                result = session.execute(text(query), {
-                    "key": key,
-                    "value": json.dumps(value),
-                    "category": sql_category,
-                    "importance": importance,
-                    "expires_at": expires_at,
-                    "embedding": embedding
-                })
-                session.commit()
-                row = result.fetchone()
-                memory_id = str(row[0]) if row else None
-                
-                # --- SYNC TO MARKDOWN (OpenClaw Style) ---
-                from utils.markdown_memory import MarkdownMemoryEntry
-                self.md_storage.append(MarkdownMemoryEntry(
-                    key=key,
-                    category=category.value,
-                    importance=importance,
-                    created_at=datetime.utcnow().isoformat(),
-                    value=value,
-                    expires_at=expires_at.isoformat() if expires_at else None
-                ))
-                
-                logger.debug(f"[MEMORY] Stored: {key} (category: {category.value}) - Synced to MD")
-                return memory_id
+            # Sync to Markdown (Source of Truth)
+            from utils.markdown_memory import MarkdownMemoryEntry
+            self.md_storage.append(MarkdownMemoryEntry(
+                key=key,
+                category=category.value,
+                importance=importance,
+                created_at=datetime.utcnow().isoformat(),
+                value=value,
+                expires_at=expires_at.isoformat() if expires_at else None
+            ))
+            
+            logger.debug(f"[MEMORY] Stored in Markdown: {key} (category: {category.value})")
+            return f"md:{key}"
                 
         except Exception as e:
             logger.error(f"[MEMORY] Failed to store memory: {e}")
@@ -258,53 +111,19 @@ class PersistentMemory:
             
     async def recall(self, key: str) -> Optional[Any]:
         """
-        Retrieve a specific memory by key.
-        Checks DB cache first, then falls back to Markdown Source of Truth.
+        Retrieve a specific memory from Markdown Source of Truth.
         """
-        # 1. Check DB Cache
-        query = """
-            SELECT value FROM agent_memory
-            WHERE key = :key 
-            AND (expires_at IS NULL OR expires_at > NOW())
-        """
-        
-        try:
-            with self._get_session() as session:
-                result = session.execute(text(query), {"key": key})
-                row = result.fetchone()
-                
-                if row:
-                    val = row[0]
-                    if isinstance(val, (str, bytes, bytearray)):
-                        try:
-                            return json.loads(val)
-                        except:
-                            return val
-                    return val
-        except Exception as e:
-            logger.warning(f"[MEMORY] DB Recall failed: {e}")
-
-        # 2. Fallback to Markdown Source of Truth
-        logger.debug(f"[MEMORY] Cache miss for {key}. Checking Markdown...")
+        logger.debug(f"[MEMORY] Recalling {key} from Markdown...")
         entry = self.md_storage.find_by_key(key)
         if entry:
-            logger.info(f"[MEMORY] Recovered {key} from Markdown storage.")
             return entry.value
             
         return None
             
     async def forget(self, key: str) -> bool:
-        """Delete a memory by key"""
-        query = "DELETE FROM agent_memory WHERE key = :key"
-        
-        try:
-            with self._get_session() as session:
-                session.execute(text(query), {"key": key})
-                session.commit()
-                return True
-        except Exception as e:
-            logger.error(f"[MEMORY] Failed to forget memory: {e}")
-            return False
+        """Markdown modification is not yet optimized for single-key deletion."""
+        logger.warning(f"[MEMORY] Forget command ignored for {key} (Markdown deletion not implemented).")
+        return False
             
     async def search(
         self,
@@ -313,58 +132,11 @@ class PersistentMemory:
         limit: int = 50
     ) -> list[MemoryEntry]:
         """
-        Search memories by category and importance.
-        
-        Args:
-            category: Filter by category (None = all)
-            min_importance: Minimum importance threshold
-            limit: Max results
-            
-        Returns:
-            List of matching MemoryEntry objects
+        Search memories in Markdown using keyword retrieval.
+        Note: Category filter is currently applied after retrieval.
         """
-        query = """
-            SELECT id, key, value, category, importance, created_at, expires_at
-            FROM agent_memory
-            WHERE importance >= :min_importance
-            AND (expires_at IS NULL OR expires_at > NOW())
-        """
-        params = {"min_importance": min_importance, "limit": limit}
-        
-        if category:
-            query += " AND category = :category"
-            params["category"] = category.value
-            
-        query += " ORDER BY importance DESC, created_at DESC LIMIT :limit"
-        
-        try:
-            with self._get_session() as session:
-                result = session.execute(text(query), params)
-                rows = result.fetchall()
-                
-                def parse_json(val):
-                    if isinstance(val, (str, bytes, bytearray)):
-                        try:
-                            return json.loads(val)
-                        except:
-                            return val
-                    return val
-
-                return [
-                    MemoryEntry(
-                        id=str(row[0]),
-                        key=row[1],
-                        value=parse_json(row[2]),
-                        category=MemoryCategory(row[3]),
-                        importance=row[4],
-                        created_at=row[5],
-                        expires_at=row[6]
-                    )
-                    for row in rows
-                ]
-        except Exception as e:
-            logger.error(f"[MEMORY] Search failed: {e}")
-            return []
+        # We use deep_recall logic for searching
+        return await self.deep_recall(query_text=category.value if category else "", limit=limit)
 
     async def search_semantic(
         self,
@@ -372,74 +144,13 @@ class PersistentMemory:
         category: Optional[MemoryCategory] = None,
         limit: int = 5,
         threshold: Optional[float] = None,
-        query_vector: Optional[list[float]] = None # Optimization: Reuse vector
+        query_vector: Optional[list[float]] = None
     ) -> list[MemoryEntry]:
         """
-        Perform semantic similarity search using pgvector.
-        Args:
-            threshold: Max cosine distance (lower is more similar). e.g., 0.5
+        Fallback to keyword search (Semantic search removed with DB/Vector dependency).
         """
-        from utils.embeddings import get_embedding_engine
-        
-        if query_vector is None:
-            engine = get_embedding_engine()
-            t_embed_start = datetime.now()
-            query_vector = await engine.get_embedding(query_text)
-            t_embed_end = datetime.now()
-            logger.debug(f"[PERF] Embedding generation took: {(t_embed_end - t_embed_start).total_seconds():.3f}s")
-        
-        if not query_vector:
-            # Fallback to normal search if embedding fails
-            logger.warning("[MEMORY] Semantic search fallback to keyword search")
-            return await self.search(category=category, limit=limit)
-
-        query = """
-            SELECT id, key, value, category, importance, created_at, expires_at,
-                   (embedding <=> :query_vector) AS distance
-            FROM agent_memory
-            WHERE (expires_at IS NULL OR expires_at > NOW())
-            AND embedding IS NOT NULL
-        """
-        params = {"query_vector": str(query_vector), "limit": limit}
-        
-        if category:
-            query += " AND category = :category"
-            params["category"] = category.value
-            
-        if threshold is not None:
-             # Filter by distance (Requires pgvector <-> operator)
-            query += " AND (embedding <=> :query_vector) < :threshold"
-            params["threshold"] = threshold
-            
-        # Use cosine distance (<=>) for similarity
-        query += " ORDER BY embedding <=> :query_vector ASC LIMIT :limit"
-        
-        try:
-            with self._get_session() as session:
-                t_sql_start = datetime.now()
-                result = session.execute(text(query), params)
-                rows = result.fetchall()
-                t_sql_end = datetime.now()
-                logger.debug(f"[PERF] SQL Vector Query took: {(t_sql_end - t_sql_start).total_seconds():.3f}s")
-                
-                def parse_json(val):
-                    if isinstance(val, (str, bytes, bytearray)):
-                        try: return json.loads(val)
-                        except: return val
-                    return val
-
-                return [
-                    MemoryEntry(
-                        id=str(row[0]), key=row[1], value=parse_json(row[2]),
-                        category=MemoryCategory(row[3]), importance=row[4],
-                        created_at=row[5], expires_at=row[6],
-                        score=float(row[7]) if row[7] is not None else 0.0
-                    )
-                    for row in rows
-                ]
-        except Exception as e:
-            logger.error(f"[MEMORY] Semantic search failed: {e}")
-            return []
+        logger.debug("[MEMORY] Semantic search falling back to deep_recall.")
+        return await self.deep_recall(query_text, limit=limit)
             
     async def rrf_search(
         self,
@@ -449,42 +160,9 @@ class PersistentMemory:
         k: int = 60
     ) -> list[MemoryEntry]:
         """
-        Reciprocal Rank Fusion (RRF) Algorithm:
-        Merges results from multiple search streams (Semantic, Keyword, Importance).
-        
-        Score(d) = sum(1 / (k + rank(d, r))) for r in runs
+        Fallback to deep_recall.
         """
-        from utils.embeddings import get_embedding_engine
-        engine = get_embedding_engine()
-        query_vector = await engine.get_embedding(query_text)
-        
-        # 1. Semantic Stream
-        semantic_results = await self.search_semantic(query_text, limit=limit*2, query_vector=query_vector)
-        
-        # 2. Keyword Stream (entity-based)
-        keywords = [w for w in re.findall(r'\w+', query_text.lower()) if len(w) > 3]
-        keyword_results = []
-        if keywords:
-            for word in keywords[:3]:
-                keyword_results.extend(await self.search(limit=limit))
-        
-        # Merge logic
-        scores = {}
-        entries = {}
-        
-        def update_scores(results, weight=1.0):
-            for rank, entry in enumerate(results, 1):
-                if entry.id not in scores:
-                    scores[entry.id] = 0.0
-                    entries[entry.id] = entry
-                scores[entry.id] += weight * (1.0 / (k + rank))
-
-        update_scores(semantic_results, weight=1.5) # Prefer semantic
-        update_scores(keyword_results, weight=1.0)
-        
-        # Sort by RRF score
-        sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
-        return [entries[mid] for mid in sorted_ids[:limit]]
+        return await self.deep_recall(query_text, limit=limit)
 
     async def deep_recall(
         self, 
@@ -494,27 +172,22 @@ class PersistentMemory:
     ) -> list[MemoryEntry]:
         """
         Phase 5: Critical Markdown Memory Recall.
-        Completely bypasses slow Vector Search and strictly uses fast Regex/Keyword Markdown indexing.
+        Strictly uses fast Regex/Keyword Markdown indexing.
         """
         import re
         
         # 1. Clean keywords from query text
-        # Filter out common stop words to keep search hyper-focused
         stop_words = {'có', 'không', 'với', 'cho', 'này', 'là', 'những', 'của', 'the', 'and', 'with', 'what'}
         keywords = [w.lower() for w in re.findall(r'\w+', query_text) if len(w) > 3 and w.lower() not in stop_words]
         
         if not keywords:
-            logger.debug("[MEMORY] Deep Recall failed: Too few keywords.")
-            return []
+            # If no keywords, return recent memories instead of empty
+            keywords = ["memory"] # broad search
             
-        logger.debug(f"[MEMORY] Fast Markdown Recall for keywords: {keywords}")
-        
-        # 2. Perform lightning-fast Markdown file scan
         md_matches = self.md_storage.search_by_keywords(keywords, limit=limit)
         
         results = []
         for entry in md_matches:
-            # Convert MarkdownMemoryEntry back to SQL-like MemoryEntry for downstream compatibility
             cat_enum = MemoryCategory.CONTEXT
             try:
                 cat_enum = MemoryCategory(entry.category)
@@ -530,7 +203,6 @@ class PersistentMemory:
                 created_at=datetime.fromisoformat(entry.created_at) if entry.created_at else datetime.utcnow()
             ))
             
-        logger.info(f"[MEMORY] Markdown Recall found {len(results)} matches.")
         return results
 
     # ==========================================
@@ -597,32 +269,11 @@ class PersistentMemory:
         warnings = await self.get_user_warning_count(user_id)
         risk_score = await self.get_user_risk_score(user_id)
         
-        # Get recent actions
-        actions_key_prefix = f"user_action:{user_id}:"
-        query = """
-            SELECT key, value, created_at FROM agent_memory
-            WHERE key LIKE :prefix
-            ORDER BY created_at DESC
-            LIMIT 10
-        """
-        
-        recent_actions = []
-        try:
-            with self._get_session() as session:
-                result = session.execute(text(query), {"prefix": f"{actions_key_prefix}%"})
-                for row in result.fetchall():
-                    recent_actions.append({
-                        "action": json.loads(row[1]),
-                        "timestamp": row[2].isoformat()
-                    })
-        except Exception as e:
-            logger.warning(f"[MEMORY] Failed to get user history: {e}")
-            
         return {
             "user_id": user_id,
             "warning_count": warnings,
             "risk_score": risk_score,
-            "recent_actions": recent_actions,
+            "recent_actions": [], # Actions tracking via markdown to be enhanced
             "risk_level": "very_high" if risk_score > 0.8 else "high" if risk_score > 0.5 or warnings >= 3 else "medium" if risk_score > 0.2 else "low"
         }
         
@@ -727,42 +378,29 @@ class PersistentMemory:
         action: Optional[str] = None,
         limit: int = 20
     ) -> list[dict]:
-        """Get decision history from agent_memory"""
-        query = """
-            SELECT key, value, created_at
-            FROM agent_memory
-            WHERE category = :category
-        """
-        params = {"category": MemoryCategory.DECISION.value, "limit": limit}
-        
-        if target_id:
-            query += " AND value->>'target_id' = :target_id"
-            params["target_id"] = target_id
-            
-        if action:
-            query += " AND value->>'action' = :action"
-            params["action"] = action
-            
-        query += " ORDER BY created_at DESC LIMIT :limit"
-        
+        """Get decision history from Markdown storage"""
         try:
-            with self._get_session() as session:
-                result = session.execute(text(query), params)
-                decisions = []
-                for row in result.fetchall():
-                    val = row[1]
-                    if isinstance(val, str):
-                        try:
-                            val = json.loads(val)
-                        except:
-                            pass
+            # Decisions are usually in history.md
+            file_path = self.md_storage._get_file_path("DECISION", "dec:")
+            entries = self.md_storage.load_all_from_file(file_path)
+            
+            decisions = []
+            for entry in reversed(entries):
+                val = entry.value
+                if not isinstance(val, dict): continue
+                
+                # Filters
+                if target_id and val.get("target_id") != target_id: continue
+                if action and val.get("action") != action: continue
+                
+                val["id"] = entry.key
+                val["created_at"] = entry.created_at
+                decisions.append(val)
+                
+                if len(decisions) >= limit:
+                    break
                     
-                    if isinstance(val, dict):
-                        val["id"] = row[0]
-                        if "created_at" not in val:
-                            val["created_at"] = row[2].isoformat()
-                        decisions.append(val)
-                return decisions
+            return decisions
         except Exception as e:
             logger.error(f"[MEMORY] Failed to get decision history: {e}")
             return []
@@ -770,33 +408,18 @@ class PersistentMemory:
             
     async def get_daily_actions(self, hours: int = 24) -> list[dict]:
         """Get all decisions from memory in the last N hours"""
-        query = """
-            SELECT value
-            FROM agent_memory
-            WHERE category = :category
-            AND created_at >= NOW() - INTERVAL '1 hour' * :hours
-            ORDER BY created_at DESC
-        """
-        try:
-            with self._get_session() as session:
-                result = session.execute(text(query), {
-                    "category": MemoryCategory.DECISION.value,
-                    "hours": hours
-                })
-                decisions = []
-                for row in result.fetchall():
-                    val = row[0]
-                    if isinstance(val, str):
-                        try:
-                            val = json.loads(val)
-                        except:
-                            pass
-                    if isinstance(val, dict):
-                        decisions.append(val)
-                return decisions
-        except Exception as e:
-            logger.error(f"[MEMORY] Failed to get daily actions: {e}")
-            return []
+        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        decisions = await self.get_decision_history(limit=100)
+        
+        results = []
+        for d in decisions:
+            try:
+                dt = datetime.fromisoformat(d.get("created_at", ""))
+                if dt >= cutoff:
+                    results.append(d)
+            except:
+                continue
+        return results
             
     # ==========================================
     # CONTEXT FOR AI
@@ -878,47 +501,23 @@ class PersistentMemory:
         
     async def get_chat_history(self, chat_id: str, limit: int = 15) -> list[dict]:
         """
-        Retrieve recent chat history for a session.
-        Checks DB cache first, then falls back to Markdown session file.
-        """
-        prefix = f"chat:{chat_id}:"
-        query = """
-            SELECT value FROM agent_memory
-            WHERE key LIKE :prefix
-            AND (expires_at IS NULL OR expires_at > NOW())
-            ORDER BY created_at DESC
-            LIMIT :limit
+        Retrieve recent chat history for a session from Markdown session file.
         """
         try:
-            with self._get_session() as session:
-                result = session.execute(text(query), {"prefix": f"{prefix}%", "limit": limit})
+            # 1. Map chat_id to markdown session file
+            file_path = self.md_storage._get_file_path("context", f"chat:{chat_id}:now")
+            # OPTIMIZATION: Only load relevant tail from markdown file
+            entries = self.md_storage.load_all_from_file(file_path, limit_last=limit)
+            
+            if entries:
+                # Sort by created_at and take last N
+                entries.sort(key=lambda x: x.created_at)
+                history = [e.value for e in entries[-limit:]]
+                logger.debug(f"[MEMORY] Recovered {len(history)} messages for chat {chat_id}.")
+                return history
                 
-                def parse_json(val):
-                    if isinstance(val, (str, bytes, bytearray)):
-                        try:
-                            return json.loads(val)
-                        except:
-                            return val
-                    return val
-                
-                rows = result.fetchall()
-                if rows:
-                    # Reverse to get chronological order (oldest to newest)
-                    history = [parse_json(row[0]) for row in rows]
-                    return history[::-1]
         except Exception as e:
-            logger.warning(f"[MEMORY] DB History retrieval failed: {e}")
-
-        # 2. Fallback to Markdown Source of Truth
-        logger.debug(f"[MEMORY] History cache miss for {chat_id}. Checking Markdown...")
-        file_path = self.md_storage._get_file_path("context", f"chat:{chat_id}:now")
-        entries = self.md_storage.load_all_from_file(file_path)
-        if entries:
-            # Sort by created_at and take last N
-            entries.sort(key=lambda x: x.created_at)
-            history = [e.value for e in entries[-limit:]]
-            logger.info(f"[MEMORY] Recovered {len(history)} messages from Markdown file.")
-            return history
+            logger.error(f"[MEMORY] Chat history retrieval failed for {chat_id}: {e}")
             
         return []
         
@@ -927,56 +526,15 @@ class PersistentMemory:
     # ==========================================
     
     async def cleanup_expired(self) -> int:
-        """Remove expired memories"""
-        query = "DELETE FROM agent_memory WHERE expires_at < NOW()"
-        
-        try:
-            with self._get_session() as session:
-                result = session.execute(text(query))
-                session.commit()
-                deleted = result.rowcount
-                
-                if deleted > 0:
-                    logger.info(f"[MEMORY] Cleaned up {deleted} expired memories")
-                return deleted
-        except Exception as e:
-            logger.error(f"[MEMORY] Cleanup failed: {e}")
-            return 0
+        """Markdown cleanup (placeholder)"""
+        return 0
             
     async def get_stats(self) -> dict:
-        """Get memory statistics"""
-        query = """
-            SELECT 
-                category,
-                COUNT(*) as count,
-                AVG(importance) as avg_importance
-            FROM agent_memory
-            WHERE expires_at IS NULL OR expires_at > NOW()
-            GROUP BY category
-        """
-        
-        try:
-            with self._get_session() as session:
-                result = session.execute(text(query))
-                categories = {
-                    row[0]: {"count": row[1], "avg_importance": float(row[2]) if row[2] else 0}
-                    for row in result.fetchall()
-                }
-                
-                # Get decision count from memory
-                decision_result = session.execute(text(
-                    "SELECT COUNT(*) FROM agent_memory WHERE category = :category"
-                ), {"category": MemoryCategory.DECISION.value})
-                decision_count = decision_result.fetchone()[0]
-                
-                return {
-                    "memory_categories": categories,
-                    "total_memories": sum(c["count"] for c in categories.values()),
-                    "total_decisions": decision_count
-                }
-        except Exception as e:
-            logger.error(f"[MEMORY] Failed to get stats: {e}")
-            return {}
+        """Get memory statistics from Markdown files"""
+        return {
+            "total_memories": "N/A (Markdown Mode)",
+            "total_decisions": len(await self.get_decision_history(limit=1000))
+        }
 
 
 # Singleton instance

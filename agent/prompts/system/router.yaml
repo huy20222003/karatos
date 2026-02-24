@@ -105,6 +105,7 @@ routing_logic: |
      - decision: Your tier (CHAT | PLAN | NONE).
      - intent: A short descriptive name for the task.
      - rationale: Your internal reasoning.
+     - confidence: Your certainty score (0.0 to 1.0).
 
   ═══════════════════════════════════════════════════════════
   INCOMING REQUEST:

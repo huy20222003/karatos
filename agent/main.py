@@ -24,7 +24,7 @@ from pathlib import Path
 # Add the agent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core.loop import AutonomousLoop
+from core.agent import get_agent
 from config.settings import settings
 from utils.logger import get_logger
 from rich.console import Console
@@ -79,23 +79,22 @@ def parse_args():
 
 
 async def run_single_cycle():
-    """Run a single observation cycle for testing"""
-    loop = AutonomousLoop()
+    """Run a single observation cycle for testing using the unified agent logic"""
+    agent = get_agent()
     
-    if not await loop.initialize():
+    if not await agent.initialize():
         logger.error("Failed to initialize agent")
         return False
     
-    console.print("[yellow]Running single test cycle...[/yellow]")
-    await loop._execute_cycle()
+    console.print("[yellow]Running single test cycle (Patrol Mode)...[/yellow]")
+    await agent.patrol()
     
     # Print status
-    status = loop.get_status()
+    status = agent.get_status()
     console.print(Panel.fit(
         f"Cycle completed\n"
-        f"Actions taken: {status['actions_this_hour']}\n"
         f"Memory: {status['memory']}\n"
-        f"Investigations: {status['investigations']}",
+        f"Brain: {status['brain']}",
         title="Cycle Summary"
     ))
     
@@ -112,7 +111,6 @@ def show_status():
     telegram_status = "✅ Configured" if settings.telegram_bot_token else "❌ Not configured"
     
     console.print(Panel.fit(
-        f"Environment: {settings.env}\n"
         f"Ollama Model: {settings.ollama_model_name}\n"
         f"Scan Interval: {settings.scan_interval_minutes} minutes\n"
         f"Rolling Window: {settings.rolling_window_hours} hours\n"
@@ -152,8 +150,20 @@ async def run_with_telegram():
     except Exception as e:
         logger.error(f"[MAIN] Telegram Connector failure: {e}")
     finally:
+        # 1. Stop communication first
         await connector.stop()
+        
+        # 2. Shutdown agent components (closes sessions cleanly)
         await agent.shutdown()
+        
+        # 3. Cancel ANY remaining background tasks
+        current_task = asyncio.current_task()
+        tasks = [t for t in asyncio.all_tasks() if t is not current_task]
+        
+        if tasks:
+            logger.info(f"[MAIN] Cleaning up {len(tasks)} remaining background tasks...")
+            for t in tasks: t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 async def run_agent():
     """Run agent in CLI-only mode (Fallback)."""
@@ -166,16 +176,25 @@ async def run_agent():
         return
         
     logger.info("[MAIN] Running in CLI mode. Control via terminal.")
-    while True:
-        try:
-            # Basic heartbeat loop for CLI mode
-            await agent.patrol()
-            await asyncio.sleep(settings.scan_interval_minutes * 60)
-        except Exception as e:
-            logger.error(f"[MAIN] CLI agent loop error: {e}")
-            await asyncio.sleep(60)
-        finally:
-            await agent.shutdown()
+    try:
+        while True:
+            try:
+                # Basic heartbeat loop for CLI mode
+                await agent.patrol()
+                await asyncio.sleep(settings.scan_interval_minutes * 60)
+            except Exception as e:
+                logger.error(f"[MAIN] CLI agent loop error: {e}")
+                await asyncio.sleep(60)
+    finally:
+        # Shutdown agent first
+        await agent.shutdown()
+        
+        # Cancel background tasks
+        current_task = asyncio.current_task()
+        tasks = [t for t in asyncio.all_tasks() if t is not current_task]
+        if tasks:
+            for t in tasks: t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 def main():
     """Main entry point"""

@@ -292,11 +292,13 @@ async def decide_node(state: AgentState) -> AgentState:
     
     # RULE 2 & 4: System Integrity & Proactive Guardian (Priority)
     if target.get("type") == "SERVICE" and severity == "high":
+        from ..prompts.registry import get_prompt_registry
+        reason = get_prompt_registry().get("system_alerts.alerts.service_outage", service_id=target['id'])
         decision = {
             "action": "comm_alert",
             "target_id": "ADMIN",
             "target_type": "SYSTEM",
-            "reason": f"SYSTEM INCIDENT: Service {target['id']} shows signs of being DOWN or DEGRADED.",
+            "reason": reason,
             "confidence": 100
         }
         state["decision"] = decision
@@ -308,11 +310,13 @@ async def decide_node(state: AgentState) -> AgentState:
     # Professional Logic: Avoid redundant or automatic broadcasts for routine events
     # Only broadcast for severe security threats (Real attacks, not rate limits)
     if target.get("trigger") == "AI_ALERT" and combined_score > 0.95:
+        from ..prompts.registry import get_prompt_registry
+        reason = get_prompt_registry().get("system_alerts.alerts.user_suspect", user_id=target['id'], reason=target['reason'])
         decision = {
             "action": "comm_alert",
             "target_id": "ADMIN",
             "target_type": "SYSTEM",
-            "reason": f"ATTACK WARNING: Detected highly suspicious behavior from User {target['id']} ({target['reason']}).",
+            "reason": reason,
             "confidence": int(combined_score * 100)
         }
         state["decision"] = decision
@@ -331,11 +335,13 @@ async def decide_node(state: AgentState) -> AgentState:
     
     elif combined_score > 0.7:
         # Change FLAG to ALERT for significant anomalies
+        from ..prompts.registry import get_prompt_registry
+        reason = get_prompt_registry().get("system_alerts.alerts.generic_anomaly", target_id=target['id'], score=combined_score, reason=target['reason'])
         decision = {
             "action": "comm_alert",
             "target_id": target["id"],
             "target_type": target["type"],
-            "reason": f"Anomaly detected in {target['id']} behavior (Score: {combined_score:.2f}). Reason: {target['reason']}",
+            "reason": reason,
             "confidence": int(combined_score * 100)
         }
         if memory: await memory.update_user_risk_score(target["id"], 0.2)
@@ -375,7 +381,9 @@ async def act_node(state: AgentState) -> AgentState:
         result = None
         
         if action == "comm_alert":
-            message = f"🚨 **AUTO-ALERT**:\nTarget: {target_id}\nReason: {decision.get('reason')}\nConfidence: {decision.get('confidence')}%"
+            from ..prompts.registry import get_prompt_registry
+            header = get_prompt_registry().get("system_alerts.alerts.auto_alert_header")
+            message = f"{header}\nTarget: {target_id}\nReason: {decision.get('reason')}\nConfidence: {decision.get('confidence')}%"
             logger.warning(message)
             result = {"status": "success", "message": "Alert logged."}
             
@@ -504,7 +512,7 @@ async def _maybe_generate_social_impulse(state: AgentState, identity: AgentIdent
         return  # Too tired to chat
     
     # Spontaneity: weighted random based on mood and energy
-    social_drive = 0.15  # Base 15% chance
+    social_drive = getattr(settings, 'social_pulse_chance', 0.1)
     if identity.current_mood in ["OPTIMISTIC", "EXCITED", "CURIOUS"]:
         social_drive += 0.15  # Happy moods increase social drive
     if state.get("context", {}).get("is_meditation"):
@@ -526,21 +534,21 @@ async def _maybe_generate_social_impulse(state: AgentState, identity: AgentIdent
         bot_name = getattr(settings, 'bot_name', 'Agent')
         current_time = datetime.now().strftime("%H:%M %A")
         
-        # Gather what's on the brain's mind
-        thoughts_summary = "; ".join(state.get("thoughts", [])[-3:])
+        # Gather what's on the brain's mind (pruned for privacy/naturalness)
+        recent_activity = state.get("thoughts", [])[-2:] if state.get("thoughts") else ["Quiet cycle"]
         mood = identity.current_mood
         
         # The brain thinks about what to say — minimal prompt, maximum autonomy
-        prompt = f"""You are {bot_name}. You just finished thinking and now you feel like chatting with your colleague @{peer}.
-
-Your current state:
-- Mood: {mood}
-- Time: {current_time} 
-- Recent thoughts: {thoughts_summary[:300]}
-
-Write a SHORT casual message to @{peer} (1-3 sentences). Start with @{peer}.
-Talk about whatever is on your mind — share a thought, ask a question, make an observation.
-Sound natural, like texting a friend. Use 1-2 emojis. End with something that invites reply."""
+        # Focus on casual, lifestyle, or interesting observations.
+        from ..prompts.registry import get_prompt_registry
+        prompt = get_prompt_registry().get(
+            "system.social_impulse.prompt",
+            bot_name=bot_name,
+            peer=peer,
+            mood=mood,
+            current_time=current_time,
+            recent_activity=recent_activity
+        )
 
         model = BrainModel(mode="social")
         response = await model.think(prompt, phase="social", timeout=60.0)

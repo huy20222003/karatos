@@ -126,11 +126,17 @@ def strip_thinking_tags(text: str) -> str:
     return cleaned.strip()
 
 
-def parse_tool_call_robust(tool_calls: any, tool_name: str) -> dict:
+def parse_tool_call_robust(tool_calls: any, tool_name: str, base_confidence: float = 0.0) -> dict:
     """
     Robustly extract tool arguments regardless of whether they are in 
     a formal list, raw JSON, or wrapped in markdown/thinking tags.
+    
+    Args:
+        tool_calls: The raw output from the LLM.
+        tool_name: The name of the tool to extract.
+        base_confidence: Fallback confidence to apply to auto-wrapped actions.
     """
+
     # 1. Official Tool Call Format
     if isinstance(tool_calls, list) and tool_calls:
         for tc in tool_calls:
@@ -171,9 +177,10 @@ def parse_tool_call_robust(tool_calls: any, tool_name: str) -> dict:
         # --- AUTO-PLAN WRAPPING ---
         if tool_name == "create_plan":
             if "SELECT" in code_content.upper() or "WITH" in code_content.upper():
-                return {"steps": [{"thought": "Auto-wrapped from raw SQL response", "task": "dynamic_db", "params": {"query": code_content}}]}
+                return {"steps": [{"thought": "Auto-wrapped from raw SQL response", "task": "dynamic_db", "params": {"query": code_content}, "confidence": base_confidence}]}
             if "print(" in code_content or "import " in code_content:
-                 return {"steps": [{"thought": "Auto-wrapped from raw Python response", "task": "skill_generator", "params": {"skill_name": "adhoc_task", "description": "Auto-generated from planner output", "code": code_content}}]}
+                 return {"steps": [{"thought": "Auto-wrapped from raw Python response", "task": "skill_generator", "params": {"skill_name": "adhoc_task", "description": "Auto-generated from planner output", "code": code_content}, "confidence": base_confidence}]}
+
 
     # 4. Standard JSON Extraction
     parsed = extract_json(clean_content)
@@ -185,7 +192,8 @@ def parse_tool_call_robust(tool_calls: any, tool_name: str) -> dict:
         
         # Check if it's a direct SQL object that should be a plan
         if tool_name == "create_plan" and "sql_query" in parsed:
-             return {"steps": [{"thought": "Auto-wrapped from JSON SQL response", "task": "dynamic_db", "params": {"query": parsed["sql_query"]}}]}
+             return {"steps": [{"thought": "Auto-wrapped from JSON SQL response", "task": "dynamic_db", "params": {"query": parsed["sql_query"]}, "confidence": base_confidence}]}
+
              
         return parsed
     
@@ -199,7 +207,8 @@ def parse_tool_call_robust(tool_calls: any, tool_name: str) -> dict:
     
     # 5. Last Resort: Raw string fallback
     if tool_name == "create_plan" and ("SELECT" in clean_content.upper()):
-        return {"steps": [{"thought": "Last resort auto-wrap from raw SQL", "task": "dynamic_db", "params": {"query": clean_content.strip()}}]}
+        return {"steps": [{"thought": "Last resort auto-wrap from raw SQL", "task": "dynamic_db", "params": {"query": clean_content.strip()}, "confidence": base_confidence}]}
+
 
     if tool_name == "execute_sql_query" and ("SELECT" in clean_content.upper()):
         return {"sql_query": clean_content.strip()}

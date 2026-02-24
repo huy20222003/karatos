@@ -10,9 +10,10 @@ import json
 import re
 from datetime import datetime
 from typing import Dict, List, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 
 from utils.logger import get_logger
+
 
 logger = get_logger()
 
@@ -27,6 +28,16 @@ class Participant:
     last_seen: str
     chat_ids: set = field(default_factory=set)
     message_count: int = 0
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        d["chat_ids"] = list(self.chat_ids)
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'Participant':
+        chat_ids = set(data.pop("chat_ids", []))
+        return cls(chat_ids=chat_ids, **data)
 
 
 class ContextWindow:
@@ -91,21 +102,43 @@ class SpatialAwareness:
         "brain", "sentry", "patrol", "log", "error",
     ])
 
-    def __init__(self):
+    def __init__(self, base_path: str = "data/storage"):
         self._participants: Dict[str, Participant] = {}
         self.context = ContextWindow()
+        self.base_path = base_path
+        
+    async def initialize(self):
+        """Load participants from persistent Markdown storage."""
+        try:
+            from utils.markdown_memory import MarkdownMemory
+            md_memory = MarkdownMemory(base_path=self.base_path)
+            
+            # Use specific file for participant profiles
+            # In utils/markdown_memory.py, USER_HISTORY/profiles.md is used for "user_" keys
+            file_path = md_memory._get_file_path("USER_HISTORY", "spatial_participants")
+            
+            entries = md_memory.load_all_from_file(file_path)
+            for entry in entries:
+                if entry.key.startswith("participant:"):
+                    p = Participant.from_dict(entry.value)
+                    self._participants[p.username.lower()] = p
+            
+            logger.info(f"[AWARENESS] Loaded {len(self._participants)} participants from {file_path}")
+        except Exception as e:
+            logger.warning(f"[AWARENESS] Failed to load participants: {e}")
 
     # ── Participant tracking ──────────────────────────────────
 
-    def observe(self, username: str, display_name: str,
+    async def observe(self, username: str, display_name: str,
                 is_bot: bool, chat_id: str, text: str = ""):
-        """Record seeing a participant + buffer their message."""
+        """Record seeing a participant + buffer their message + persist."""
         if not username:
             return
         key = username.lower()
         now = datetime.utcnow().isoformat()
 
-        if key not in self._participants:
+        is_new = key not in self._participants
+        if is_new:
             self._participants[key] = Participant(
                 username=username,
                 display_name=display_name,
@@ -120,6 +153,21 @@ class SpatialAwareness:
 
         if text:
             self.context.push(chat_id, username, text)
+            
+        # Persist every 5 messages or if new
+        if is_new or p.message_count % 5 == 0:
+            try:
+                from utils.markdown_memory import MarkdownMemory, MarkdownMemoryEntry
+                md_memory = MarkdownMemory(base_path=self.base_path)
+                md_memory.append(MarkdownMemoryEntry(
+                    key=f"participant:{key}",
+                    category="USER_HISTORY",
+                    importance=0.2,
+                    created_at=now,
+                    value=p.to_dict()
+                ))
+            except Exception as e:
+                logger.debug(f"[AWARENESS] Failed to persist participant {username}: {e}")
 
     def get_peers(self, *, chat_id: str = None,
                   exclude: str = None) -> List[Participant]:

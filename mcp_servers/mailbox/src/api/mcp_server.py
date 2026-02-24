@@ -1,7 +1,8 @@
 import json
 from mcp.server.fastmcp import FastMCP
 from ..core.communication import CommunicationManager
-
+from ..core.security import SecurityShield
+from fastapi import Depends
 from ..config import settings
 
 # Initialize FastMCP
@@ -9,6 +10,51 @@ mcp = FastMCP(settings.SERVER_NAME)
 
 # Internal manager instance
 comm_manager = CommunicationManager()
+
+# Access the underlying FastAPI app
+app = mcp.sse_app()
+
+# --- MIDDLEWARE (Raw ASGI for SSE compatibility) ---
+# --- MIDDLEWARE (Raw ASGI for SSE compatibility) ---
+class ASGIMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        
+        # Only protect key MCP endpoints
+        if path.startswith("/sse") or path.startswith("/messages") or path.startswith("/tools"):
+            # Extract headers from scope for raw inspection (tuples of byte-strings)
+            headers = dict(scope.get("headers", []))
+            token = headers.get(b"x-mailbox-token", b"").decode("utf-8")
+            
+            try:
+                await SecurityShield.verify_token(token)
+            except Exception:
+                # print(f"[AUTH] ❌ Blocked: {scope['method']} {path}")
+                from starlette.responses import JSONResponse
+                response = JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+                await response(scope, receive, send)
+                return
+
+        await self.app(scope, receive, send)
+
+# Apply raw ASGI middleware manually to the sse_app
+app.add_middleware(ASGIMiddleware)
+
+@app.on_event("startup")
+async def startup_event():
+    print(f"[SYSTEM] Mailbox Server starting up...")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    print(f"[SYSTEM] Mailbox Server shutting down gracefully...")
+    comm_manager.save_all()
 
 @mcp.tool()
 def drop_message(sender: str, target: str, chat_id: str, content: str) -> str:
@@ -20,11 +66,14 @@ def drop_message(sender: str, target: str, chat_id: str, content: str) -> str:
         chat_id: The chat ID where this was initiated.
         content: The actual message content.
     """
+    # Sanitize content before dropping
+    safe_content = SecurityShield.sanitize_content(content)
+    
     successful_targets = comm_manager.drop_message(
         sender=sender,
         targets=target,
         chat_id=chat_id,
-        content=content
+        content=safe_content
     )
     return f"Successfully dropped message for: {', '.join(successful_targets)}"
 

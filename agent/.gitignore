@@ -62,7 +62,7 @@ coverage.xml
 Thumbs.db
 
 #data
-#data/
+data/
 
 #docs
 docs/

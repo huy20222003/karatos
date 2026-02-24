@@ -239,7 +239,10 @@ class Brain:
             "associative_context": "",
             "cycle_complete": False,
             "is_fast_track": False,
+            "processed": context.get("processed"), # Preserved metadata
+            "confidence": 0.0,
             "mood": "OPTIMISTIC",
+
             "energy_level": 1.0,
             "user_affinity": 0.5,
             "error": None
@@ -359,7 +362,12 @@ class Brain:
         channel = get_channel(channel_name)
         
         if not channel:
-            logger.warning(f"[BRAIN] Channel '{channel_name}' not available for plan monitoring.")
+            logger.warning(f"[BRAIN] Channel '{channel_name}' not available. Falling back to 'telegram'.")
+            channel_name = "telegram"
+            channel = get_channel("telegram")
+            
+        if not channel:
+            logger.error(f"[BRAIN] Critical: No valid channel available for monitoring {chat_id}.")
             return
 
         try:

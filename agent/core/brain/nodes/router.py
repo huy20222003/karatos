@@ -11,7 +11,7 @@ from ..model import SharedModelProvider, BrainModel
 from langchain_core.tools import tool
 
 @tool
-def route_intent(decision: str, intent: str, rationale: str = None) -> str:
+def route_intent(decision: str, intent: str, rationale: str = None, confidence: float = 1.0) -> str:
     """Classify the user message into a decision tier and provide intent details.
     
     Args:
@@ -21,8 +21,10 @@ def route_intent(decision: str, intent: str, rationale: str = None) -> str:
             - NONE: The message is not addressed to you or is irrelevant.
         intent: A descriptive name for the detected specific intent (e.g., 'CheckWeather', 'QueryUserCount').
         rationale: Brief internal reasoning for this decision.
+        confidence: Your certainty score for this decision (0.0 to 1.0).
     """
     pass
+
 
 # Identity wrapper for thinking
 class RouterModel(BrainModel):
@@ -50,16 +52,28 @@ async def chat_route_node(state: ChatState) -> ChatState:
     NEURAL ROUTER: Determine if the request needs a multi-step plan.
     Enhanced with Phase 14.0 PPF + Phase 15.2 ACR Integration + Feedback Bus.
     """
+    msg = state["user_message"]
+    # NGO: Preserve metadata-aware logic
+    processed = state.get("processed")
+    content_type = processed.content_type if processed else "unknown"
+    
+    if content_type == "social" and len(msg.split()) < 4:
+        logger.info(f"[ROUTER] ⚡ Metadata Fast-Track: SOCIAL intent detected.")
+        state["decision"] = "CHAT"
+        state["phase"] = "routed"
+        return state
     # NGO FIX: Prevent double routing when resuming graph in background
     if (state.get("plan") or state.get("phase") in ["routed", "planned"]) and state.get("needs_planning") is not None:
         logger.info(f"[ROUTER] Skipping routing (Already {state.get('phase', 'with plan')}).")
         return state
 
-    msg = state["user_message"]
     
-    # --- PHASE 1 & 4: DIGITAL ENTITY - EMOTION & CIRCADIAN ---
+    # --- PHASE 1 & 4: DIGITAL ENTITY - EMOTION & CIRCADIAN (Phase 25) ---
     try:
-        from utils.emotion import compute_digital_entity_state
+        from core.identity import AgentIdentity
+        from utils.sentiment import analyze_sentiment
+        
+        identity = AgentIdentity()
         state_memory = state.get("context", {}).get("memory")
         chat_id = state.get("chat_id")
         
@@ -68,15 +82,27 @@ async def chat_route_node(state: ChatState) -> ChatState:
             stored_vibe = await state_memory.recall(f"affinity_score:{chat_id}")
             if stored_vibe is not None:
                 vibe_score = float(stored_vibe)
-                
-        # Compute mood and energy
-        entity_state = compute_digital_entity_state(affinity_score=vibe_score)
-        state["mood"] = entity_state["mood"]
-        state["energy_level"] = entity_state["energy_level"]
-        state["user_affinity"] = entity_state["user_affinity"]
-        logger.debug(f"[ROUTER] Digital Entity State - Affinity: {vibe_score:.2f}, Energy: {state['energy_level']}")
+        
+        # Initialize identity with stored affinity
+        identity.user_affinity = vibe_score
+        
+        # 1. Evolve mood based on current message sentiment
+        sentiment_score = await analyze_sentiment(msg)
+        identity.evolve_mood(stimulus="MESSAGE_RECEIVED", outcome="success", sentiment=sentiment_score)
+        
+        # 2. Sync results to state for persona nodes
+        circadian = identity._get_circadian_state()
+        state["mood"] = f"{identity.current_mood}. note: {circadian['circadian_mood']}"
+        state["energy_level"] = round(identity.energy, 2)
+        state["user_affinity"] = round(identity.user_affinity, 2)
+        
+        # 3. Persist updated affinity (CIE Tier 3)
+        if state_memory and chat_id:
+            await state_memory.remember(f"affinity_score:{chat_id}", identity.user_affinity, importance=0.1)
+            
+        logger.debug(f"[ROUTER] Embodiment - Affinity: {identity.user_affinity:.2f}, Mood: {identity.current_mood}, Energy: {identity.energy:.2f}")
     except Exception as e:
-        logger.warning(f"[ROUTER] Failed to compute emotion/circadian state: {e}")
+        logger.warning(f"[ROUTER] Failed to compute embodiment state: {e}")
     
     # --- NGO UNIVERSAL FIX: Always strip own name/tag from the start ---
     my_username = (getattr(settings, 'bot_username', '') or '').lower()
@@ -114,57 +140,12 @@ async def chat_route_node(state: ChatState) -> ChatState:
     if is_bus_a2a:
         msg_no_bus_tag = msg.replace(a2a_match.group(0), "").strip()
 
-    # --- NGO HARD PRE-FILTER (v2): Multi-bot intent check with boundary boundary ---
-    if not is_bus_a2a:
-        msg_clean = msg_no_bus_tag.strip()
-        
-        import re as _re
-        
-        # 1. Am I being addressed at the start?
-        i_am_target = False
-        self_identifiers = [my_username, my_name]
-        for s in self_identifiers:
-            if not s or len(s) < 3: continue
-            s_clean = s.lower().lstrip('@')
-            # Match start of string, optional @, followed by name and a word boundary or punctuation
-            pattern = _re.compile(rf'^@?{_re.escape(s_clean)}(?![a-zA-Z0-9_\-])', _re.IGNORECASE)
-            if pattern.match(msg_clean):
-                i_am_target = True
-                break
-        
-        # 2. Am I mentioned ANYWHERE in the message? (OpenClaw Mention Gate)
-        i_am_mentioned_anywhere = False
-        for s in self_identifiers:
-            if not s or len(s) < 3: continue
-            s_clean = s.lower().lstrip('@')
-            # Match anywhere, preceded by non-word char or start of string
-            pattern = _re.compile(rf'(?:^|[^a-zA-Z0-9_])@?{_re.escape(s_clean)}(?![a-zA-Z0-9_\-])', _re.IGNORECASE)
-            if pattern.search(msg_clean):
-                i_am_mentioned_anywhere = True
-                break
-
-        # 3. If I'm not the target, is someone else?
-        message_starts_with_any_peer = False
-        if not i_am_target:
-            for p in set(known_peers):
-                if not p or len(p) < 4: continue
-                p_clean = p.lower().lstrip('@')
-                pattern = _re.compile(rf'^@?{_re.escape(p_clean)}(?![a-zA-Z0-9_\-])', _re.IGNORECASE)
-                if pattern.match(msg_clean):
-                    message_starts_with_any_peer = True
-                    break
-        
-        # 4. Decision: OpenClaw-inspired Routing Gate
-        # We NO LONGER hardcode grammatical checks like "và", "cả hai" (Group Intent).
-        # We rely on the Mention Gate: If we are mentioned ANYWHERE, we let it pass to LLM.
-        # If the message is explicitly targeted at someone else and we are NOT mentioned anywhere, drop it.
-        if message_starts_with_any_peer and not i_am_target and not i_am_mentioned_anywhere:
-            logger.info(f"[ROUTER] 🛑 NGO Pre-Filter: Message addresses another peer & bot not mentioned ({msg_clean[:20]}...). Silent mode.")
-            state["phase"] = "routed"
-            state["decision"] = "NONE"
-            from ..algorithms.feedback_bus import get_feedback_bus
-            get_feedback_bus().emit("ROUTING_OUTCOME", {"decision": "NONE", "method": "HARD_PREFILTER_PEER_V2"}, source="router")
-            return state
+    # --- MENTION DETECTION (Neural Transition) ---
+    # We NO LONGER hard-block messages in groups using regex.
+    # The Brain (Router) will decide 'NONE' or 'CHAT' based on context and mention style.
+    # This allows for more flexible interactions like answering 
+    # when referred to with pronouns or in ambiguous ways.
+    pass
             
     # ========================================
     # PHASE 14.0 + 15.2: PPF → ACR → Feedback Bus
@@ -202,7 +183,11 @@ async def chat_route_node(state: ChatState) -> ChatState:
     tier = acr_result["tier"]
     conf = acr_result.get("confidence", 0.0)
     
+    # NGO: Always preserve ACR confidence as base
+    state["confidence"] = conf
+    
     if tier == "auto" and conf > 0.92 and ppf_decision:
+
         # HIGH CONFIDENCE: Brain routes instinctively (no LLM needed)
         logger.info(f"[ROUTER] ⚡ Instinctive route: {ppf_decision} (confidence: {conf:.2f}) — no LLM needed")
         _apply_routing_decision(state, ppf_decision, msg)
@@ -233,8 +218,8 @@ async def chat_route_node(state: ChatState) -> ChatState:
     
     # Contextual awareness: Optimized history (Summary + Recent) via ContextManager
     from memory.context import ConversationContextManager
-    ctx_manager = ConversationContextManager(char_limit_per_message=500, total_history_limit=2000)
-    history_str = await ctx_manager.get_optimized_history(state["chat_id"], state["context"]["memory"], limit=5)
+    ctx_manager = ConversationContextManager(char_limit_per_message=1000, total_history_limit=3000)
+    history_str = await ctx_manager.get_optimized_history(state["chat_id"], state["context"]["memory"], limit=settings.context_planning_limit)
     first_message = history_str.split('\n')[0] if history_str else ""
     
     # --- SPECULATIVE HINT ---
@@ -266,20 +251,18 @@ async def chat_route_node(state: ChatState) -> ChatState:
     # When confidence is moderate (0.50-0.80), use minimal prompt — brain
     # already has a good guess, just needs LLM confirmation.
     if tier == "brief" and ppf_decision:
-        brief_scaffold = f"""Classify intent. CHAT=conversation only. PLAN=needs tools/data/action. NONE=not for me.
-You are {getattr(settings, 'bot_name', 'Brain')} (@{getattr(settings, 'bot_username', 'bot')}).
-Co-workers in this chat: {peers_list}
-Intuition: {intuition_signal}
-Hint prediction: {ppf_decision} {hint}
-Context: {first_message}
-Tools: {skills_compact[:300]}
-
-REQUEST: "{msg}"
-
-Select ONE decision from [CHAT, PLAN, NONE] by calling the `route_intent` tool.
-Do not provide any text output outside of the tool call."""
+        brief_scaffold = p_registry.get("system.router_brief.prompt",
+                                        bot_name=getattr(settings, 'bot_name', 'Brain'),
+                                        bot_username=getattr(settings, 'bot_username', 'bot'),
+                                        peers=peers_list,
+                                        intuition=intuition_signal,
+                                        ppf_decision=ppf_decision,
+                                        hint=hint,
+                                        first_message=first_message,
+                                        skills_compact=skills_compact[:300],
+                                        msg=msg)
         
-        logger.info(f"[ROUTER] 📋 Brief tier — compressed scaffold ({len(brief_scaffold)} chars)")
+        logger.info(f"[ROUTER] 📋 Brief tier — centralized scaffold ({len(brief_scaffold)} chars)")
         model = RouterModel()
         prompt = brief_scaffold
     else:
@@ -326,6 +309,27 @@ Do not provide any text output outside of the tool call."""
         else:
             decision = "CHAT"
     
+    # Phase 21.3: Bayesian Fusion of Intuition (ACR) and Conscious Reasoning (LLM)
+    llm_conf = res.get("confidence")
+    conscious_signal = float(llm_conf) if llm_conf is not None else 0.85 # Standard signal strength for active decision
+    
+    # Recalculate fused confidence using the full metadata
+    fused_result = acr.compute_confidence(
+        user_message=msg,
+        query_vector=state.get("query_vector"),
+        ppf_confidence=ppf_confidence,
+        ppf_decision=ppf_decision,
+        intent_match=intent_match,
+        intent_similarity=intent_similarity,
+        conscious_signal=conscious_signal
+    )
+    
+    state["confidence"] = fused_result["confidence"]
+    logger.info(f"[ROUTER] Bayesian Fused Confidence: {state['confidence']:.2f}")
+    if fused_result.get("dissonance", 0) > 0.5:
+         logger.warning(f"[ROUTER] Cognitive Dissonance: Intuition vs reasoning conflict.")
+
+
 
     _apply_routing_decision(state, decision, msg, res)
     rationale = res.get("rationale", "No rationale provided")

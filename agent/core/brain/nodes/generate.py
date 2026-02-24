@@ -29,7 +29,8 @@ async def chat_generate_node(state: ChatState) -> ChatState:
         # Check for upstream errors (e.g. Router timeout)
         if state.get("error"):
             logger.warning(f"[NEURAL_GENERATE] Skipping synthesis due to upstream error: {state['error']}")
-            state["response"] = "I apologize, but my reasoning engine is experiencing some delay (timeout). Please try again in a moment! 🧠🐢"
+            from ..prompts.registry import get_prompt_registry
+            state["response"] = get_prompt_registry().get("system_alerts.errors.synthesis_timeout")
             state["phase"] = "completed"
             return state
 
@@ -41,11 +42,12 @@ async def chat_generate_node(state: ChatState) -> ChatState:
             peer_bot_map = await mcp.get_bot_registrations()
         except Exception as e:
             logger.debug(f"[NEURAL_GENERATE] Failed to fetch peer registrations: {e}")
-        
+            
         if peer_bot_map:
-            # NGO: ONLY show @tags to force the LLM to use them. No names allowed for tagging.
-            peers_info = [f"@{tag.lstrip('@')}" for name, tag in peer_bot_map.items()]
-            peer_context = f"\nREGISTERED BOT HANDLES (TAG ONLY USING THESE): {', '.join(peers_info)}"
+            # NGO: ONLY show @tags to force the LLM to use them. 
+            peers_info = ", ".join([f"@{tag.lstrip('@')}" for name, tag in peer_bot_map.items()])
+            from ..prompts.registry import get_prompt_registry
+            peer_context = get_prompt_registry().get("system_alerts.protocols.peer_tagging", peers_info=peers_info)
             existing_logic = str(state.get("logic") or "").strip()
             state["logic"] = f"{existing_logic}\n{peer_context}".strip()
 
@@ -64,7 +66,9 @@ async def chat_generate_node(state: ChatState) -> ChatState:
                 from ..model import SharedModelProvider
                 model_prov = SharedModelProvider.get_model()
                 msg_val = state.get("user_message", "")
-                eval_prompt = f"You are the Memory Critic.\nUser's Current Question: \"{msg_val}\"\nFound Cached Answer: \"{cached}\"\n\nDoes this cached answer perfectly resolve the user's current question without needing any new information or tool usage?\nReply ONLY with \"YES\" or \"NO\"."
+                
+                from ..prompts.registry import get_prompt_registry
+                eval_prompt = get_prompt_registry().get("system.cache_critic.prompt", msg_val=msg_val, cached=cached)
                 
                 try:
                     critic_eval = await model_prov.think(eval_prompt, phase="brief")
@@ -101,7 +105,9 @@ async def chat_generate_node(state: ChatState) -> ChatState:
                     
                     for anchor in raw_core_memories:
                         val = anchor.value if isinstance(anchor.value, str) else str(anchor.value)
-                        eval_prompt = f"You are the Memory Critic. The user is currently discussing: \"{msg}\".\nYou retrieved this past memory: \"{val}\".\nIs this past memory genuinely relevant and helpful for the current context? (Beware of keyword overlaps across unrelated events).\nReply ONLY with \"YES\" or \"NO\"."
+                        
+                        from ..prompts.registry import get_prompt_registry
+                        eval_prompt = get_prompt_registry().get("system.critic.prompt", msg=msg, val=val)
                         try:
                             eval_res = await critic_model.think(eval_prompt, phase="brief")
                             if "YES" in eval_res.upper():
@@ -161,10 +167,10 @@ async def chat_generate_node(state: ChatState) -> ChatState:
         # Current Time for context
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Context for generation (Relaxed for GPU - Increased to 100 messages)
+        # Context for generation (Relaxed for GPU - Increased to {settings.context_generation_limit} messages)
         from memory.context import ConversationContextManager
         ctx_manager = ConversationContextManager(char_limit_per_message=8000, total_history_limit=50000)
-        history_str = await ctx_manager.get_optimized_history(state["chat_id"], state["context"]["memory"], limit=100)
+        history_str = await ctx_manager.get_optimized_history(state["chat_id"], state["context"]["memory"], limit=settings.context_generation_limit)
 
         # Build Results String & Smart Compression
         results_str = ""

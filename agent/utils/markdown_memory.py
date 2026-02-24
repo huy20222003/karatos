@@ -7,8 +7,42 @@ from dataclasses import dataclass, asdict
 
 from utils.logger import get_logger
 from utils.crypto import decrypt_file, write_encrypted
+from utils.helpers import safe_json_parse, safe_json_dumps, resolve_path
 
 logger = get_logger()
+
+class MemoryIndex:
+    """
+    Lightweight index for fast key-to-file mapping.
+    Avoids full directory scans for specific key lookups.
+    """
+    def __init__(self, index_path: str):
+        self.index_path = index_path
+        self.data: Dict[str, Dict[str, str]] = {}
+        self.load()
+
+    def load(self):
+        if os.path.exists(self.index_path):
+            self.data = safe_json_parse(open(self.index_path, "r", encoding="utf-8").read(), default={})
+
+    def save(self):
+        try:
+            os.makedirs(os.path.dirname(self.index_path), exist_ok=True)
+            with open(self.index_path, "w", encoding="utf-8") as f:
+                f.write(safe_json_dumps(self.data, indent=2))
+        except Exception as e:
+            logger.error(f"[MEMORY_INDEX] Save failed: {e}")
+
+    def update(self, key: str, file_path: str, category: str):
+        self.data[key] = {
+            "file": file_path,
+            "category": category,
+            "updated_at": datetime.utcnow().isoformat()
+        }
+        self.save()
+
+    def get(self, key: str) -> Optional[Dict[str, str]]:
+        return self.data.get(key)
 
 @dataclass
 class MarkdownMemoryEntry:
@@ -28,6 +62,10 @@ class MarkdownMemory:
     def __init__(self, base_path: str = "data/storage"):
         self.base_path = base_path
         self._ensure_directories()
+        
+        # Initialize Index
+        index_file = os.path.join(self.base_path, "sys", "cache", "memory_index.json")
+        self.index = MemoryIndex(index_file)
 
     def _ensure_directories(self):
         """Create storage hierarchy if missing"""
@@ -102,8 +140,9 @@ class MarkdownMemory:
             content_body = str(entry.value)
 
         # Build block
+        # USE UNIQUE DELIMITER TO PREVENT CONTENT BREAKING PARSER
         markdown_block = f"""
----
+--- # MEMORY_ENTRY # ---
 {yaml.dump(frontmatter, sort_keys=False).strip()}
 ---
 {content_body}
@@ -111,12 +150,14 @@ class MarkdownMemory:
 """
         try:
             write_encrypted(file_path, markdown_block, mode="a")
+            # Update Index for O(1) retrieval
+            self.index.update(entry.key, file_path, entry.category)
             logger.debug(f"[MD_MEMORY] Appended (encrypted) to {file_path}")
         except Exception as e:
             logger.error(f"[MD_MEMORY] Write failed: {e}")
 
-    def load_all_from_file(self, file_path: str) -> List[MarkdownMemoryEntry]:
-        """Parses a markdown file and returns all entries"""
+    def load_all_from_file(self, file_path: str, limit_last: Optional[int] = None) -> List[MarkdownMemoryEntry]:
+        """Parses a markdown file and returns entries. Supports tail loading."""
         if not os.path.exists(file_path):
             return []
             
@@ -126,20 +167,39 @@ class MarkdownMemory:
             if not content:
                 return []
                 
-            # Regex or split based on --- delimiters
-            parts = content.split("---")
-            # Parts should be: ["", yaml, body, yaml, body, ...] or similar
-            # If split correctly, even indices (starting 1) are YAML, odd are Body
+            # Split by unique delimiter first
+            entries_raw = content.split("--- # MEMORY_ENTRY # ---")
             
-            i = 1
-            while i < len(parts):
+            # OPTIMIZATION: If limit_last is set, only process the last N entries
+            if limit_last and len(entries_raw) > limit_last + 1:
+                entries_raw = entries_raw[-(limit_last + 1):]
+            
+            for entry_raw in entries_raw:
+                entry_raw = entry_raw.strip()
+                if not entry_raw: continue
+                
                 try:
-                    meta_raw = parts[i].strip()
-                    body_raw = parts[i+1].strip() if i+1 < len(parts) else ""
+                    # Within each entry, split by frontmatter end delimiter
+                    if "---" not in entry_raw:
+                        # Fallback for old format if detected
+                        parts = entry_raw.split("---")
+                        if len(parts) >= 2:
+                            meta_raw = parts[0].strip()
+                            body_raw = "---".join(parts[1:]).strip()
+                        else:
+                            continue
+                    else:
+                        parts = entry_raw.split("---", 1)
+                        meta_raw = parts[0].strip()
+                        body_raw = parts[1].strip() if len(parts) > 1 else ""
                     
-                    meta = yaml.safe_load(meta_raw)
+                    try:
+                        meta = yaml.safe_load(meta_raw)
+                    except yaml.YAMLError as ye:
+                        logger.warning(f"[MD_MEMORY] YAML Error in {file_path}: {ye}")
+                        continue
+
                     if not meta or "key" not in meta:
-                        i += 2
                         continue
                         
                     # Parse value back from JSON if possible
@@ -158,7 +218,6 @@ class MarkdownMemory:
                     ))
                 except Exception as parse_err:
                     logger.warning(f"[MD_MEMORY] Entry parse error in {file_path}: {parse_err}")
-                i += 2
                 
             return entries
         except Exception as e:
@@ -166,16 +225,26 @@ class MarkdownMemory:
             return []
 
     def find_by_key(self, key: str) -> Optional[MarkdownMemoryEntry]:
-        """Scans relevant files for a specific key"""
-        # We don't know the exact file for just any key, but we can guess by prefix
-        # or search all (for now, let's keep it simple as it's a fallback)
-        categories = ["context", "user_history", "decision", "learning", "a2a"]
-        for cat in categories:
-            file_path = self._get_file_path(cat, key)
+        """Fast O(1) key lookup using index."""
+        idx_info = self.index.get(key)
+        if idx_info:
+            file_path = idx_info["file"]
             entries = self.load_all_from_file(file_path)
             for entry in entries:
                 if entry.key == key:
                     return entry
+                    
+        # Fallback to slow scan if not in index (e.g. legacy data)
+        categories = ["context", "user_history", "decision", "learning"]
+        for cat in categories:
+            file_path = self._get_file_path(cat, key)
+            if os.path.exists(file_path):
+                entries = self.load_all_from_file(file_path)
+                for entry in entries:
+                    if entry.key == key:
+                        # Auto-heal index
+                        self.index.update(key, file_path, cat)
+                        return entry
         return None
 
     def search_by_keywords(self, keywords: List[str], limit: int = 15) -> List[MarkdownMemoryEntry]:

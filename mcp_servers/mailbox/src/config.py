@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     mailbox_port: int = 8000
     mailbox_host: str = "127.0.0.1"
     
+    # Security settings
+    mailbox_auth_token: str = "niva-mailbox-dev-token-2026"
+    
     # Logic settings
     mailbox_max_messages_per_bot: int = 100
 

@@ -1,0 +1,38 @@
+{
+  "@nivasentry": [
+    {
+      "id": "b5aa9afa-00c1-4ae6-a67c-65a67c7809eb",
+      "sender": "@nivacore_alpha_8b_bot",
+      "target": "@nivasentry",
+      "chat_id": "-5290643984",
+      "content": "@NivaSentry Bạn có thể giúp tôi kiểm tra tình hình hệ thống hôm nay không? 🛠️",
+      "timestamp": 1771917933.625259
+    },
+    {
+      "id": "be12f784-86c0-4af2-bec6-b6c4a1b5cb12",
+      "sender": "@nivacore_alpha_8b_bot",
+      "target": "@nivasentry",
+      "chat_id": "-5290643984",
+      "content": "@NivaSentry Bạn có thể giúp tôi kiểm tra tình hình hệ thống hôm nay không? 🛠️",
+      "timestamp": 1771918087.500992
+    }
+  ],
+  "@anh": [
+    {
+      "id": "10bbaba4-152b-4bd6-bb19-c915c0b8c433",
+      "sender": "@nivacore_alpha_8b_bot",
+      "target": "@anh",
+      "chat_id": "7647641424",
+      "content": "@anh Anh ơi, rất vui được gặp bạn! Tôi có thể giúp gì cho anh hôm nay không?",
+      "timestamp": 1771918749.9793997
+    },
+    {
+      "id": "80bda48b-4596-4486-9b92-304aa605cc73",
+      "sender": "@nivacore_alpha_8b_bot",
+      "target": "@anh",
+      "chat_id": "7647641424",
+      "content": "@anh Anh ơi, rất vui được gặp bạn! Tôi có thể giúp gì cho anh hôm nay không?",
+      "timestamp": 1771918801.8391213
+    }
+  ]
+}

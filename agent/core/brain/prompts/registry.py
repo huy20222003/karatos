@@ -13,6 +13,7 @@ class PromptRegistry:
     """
     _instance = None
     _prompts: Dict[str, str] = {}
+    _hashes: Dict[str, str] = {}
     
     # Path settings (Dynamic resolution relative to this file's parent)
     PROMPT_ROOT = Path(__file__).parent.parent.parent.parent / "prompts"
@@ -38,10 +39,23 @@ class PromptRegistry:
 
         self._prompts = {}
         for file_path in self.PROMPT_ROOT.rglob("*"):
-            if file_path.suffix in [".yaml", ".yml"]:
-                self._load_yaml(file_path)
-            elif file_path.suffix == ".md":
-                self._load_markdown(file_path)
+            if not file_path.is_file():
+                continue
+                
+            # MD5 verification to avoid redundant parsing
+            import hashlib
+            try:
+                current_hash = hashlib.md5(file_path.read_bytes()).hexdigest()
+                if self._hashes.get(str(file_path)) == current_hash:
+                    continue # Skip unchanged file
+                
+                self._hashes[str(file_path)] = current_hash
+                if file_path.suffix in [".yaml", ".yml"]:
+                    self._load_yaml(file_path)
+                elif file_path.suffix == ".md":
+                    self._load_markdown(file_path)
+            except Exception as e:
+                logger.error(f"[PromptRegistry] Hash check failed for {file_path}: {e}")
         
         logger.debug(f"[PromptRegistry] Loaded {len(self._prompts)} prompt templates.")
 

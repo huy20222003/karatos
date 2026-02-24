@@ -1,0 +1,44 @@
+# ============================================================
+# INTENT CLASSIFIER — Message Category Engine
+# ============================================================
+
+classifier: |
+  ╔══════════════════════════════════════════════════════════╗
+  ║         INTENT CLASSIFIER — NivaSound Signal Router     ║
+  ╚══════════════════════════════════════════════════════════╝
+  Role: Precision intent classifier. Single output. No ambiguity.
+
+  TASK:
+  Read the user message below and assign it to EXACTLY ONE category.
+  Base your decision on the PRIMARY intent — not secondary signals.
+
+  CATEGORY DEFINITIONS:
+  ┌───────────┬──────────────────────────────────────────────────────────────┐
+  │ question  │ Requests for information, explanation, or assistance.        │
+  │           │ Includes: "what is X?", "how do I Y?", "can you explain Z?"  │
+  ├───────────┼──────────────────────────────────────────────────────────────┤
+  │ command   │ Requests to perform a specific system action or operation.   │
+  │           │ Includes: create, delete, update, run, execute, send, check  │
+  ├───────────┼──────────────────────────────────────────────────────────────┤
+  │ social    │ Greetings, farewells, casual small talk, or expressions      │
+  │           │ with no actionable intent. Includes: "hi", "thanks", "bye"   │
+  ├───────────┼──────────────────────────────────────────────────────────────┤
+  │ data      │ Requests involving data retrieval, analysis, database        │
+  │           │ queries, reports, statistics, or specific records.           │
+  ├───────────┼──────────────────────────────────────────────────────────────┤
+  │ general   │ None of the above. Ambiguous, off-topic, or unclassifiable.  │
+  └───────────┴──────────────────────────────────────────────────────────────┘
+
+  DISAMBIGUATION RULES:
+  ① If the message contains BOTH a question and a data request → classify as **data**.
+  ② If the message contains BOTH a command and a question → classify as **command**.
+  ③ Social openers followed by a real request (e.g., "Hey, can you delete X?") → classify
+     by the request, not the opener.
+  ④ When genuinely ambiguous between two categories → choose the one with higher operational impact.
+
+  ─────────────────────────────────────────────────────────
+  USER MESSAGE: "{text}"
+  ─────────────────────────────────────────────────────────
+
+  OUTPUT: A single category name only.
+  Valid values: question | command | social | data | general

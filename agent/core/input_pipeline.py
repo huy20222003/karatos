@@ -11,7 +11,8 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Any
+from utils.helpers import task_timer
 
 from utils.logger import get_logger
 
@@ -23,28 +24,27 @@ _RE_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _RE_ZWSP = re.compile(r"[\u200b\u200c\u200d\ufeff\u2060]")
 _RE_MULTI_SPACE = re.compile(r"\s{3,}")
 
-# Question signals (vi + en)
-_Q_SIGNALS_EN = re.compile(
-    r"(?i)\b(what|how|where|when|who|why|which|can you|could you|is there|are there)\b"
-)
-_Q_SIGNALS_VI = re.compile(
-    r"(?i)(là gì|ở đâu|khi nào|tại sao|như thế nào|có ai|ai biết|giúp|bao nhiêu)"
-)
+# --- Centralized Heuristic Signals (Placeholder) ---
+# These are loaded from heuristics.yaml at runtime
+_SIGNAL_CACHE = None
 
-# Command signals
-_CMD_SIGNALS = re.compile(
-    r"(?i)^(show|list|get|find|create|delete|update|run|start|stop|set|check|reset|deploy)\b"
-)
-
-# Data / query signals
-_DATA_SIGNALS = re.compile(
-    r"(?i)\b(database|table|query|sql|row|column|count|select|track|artist|album|user)\b"
-)
-
-# Greeting signals
-_GREETING_SIGNALS = re.compile(
-    r"(?i)^(hi|hello|hey|chào|xin chào|yo|good morning|good afternoon)\b"
-)
+def _get_signals():
+    global _SIGNAL_CACHE
+    if _SIGNAL_CACHE is None:
+        try:
+            from core.brain.prompts.registry import get_prompt_registry
+            registry = get_prompt_registry()
+            # In a real scenario, we might add a 'get_raw' or similar to registry
+            # For now, we'll use a simplified loading logic
+            import yaml
+            import os
+            h_path = os.path.join(os.path.dirname(__file__), "..", "prompts", "system", "heuristics.yaml")
+            with open(h_path, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f)
+                _SIGNAL_CACHE = data.get("signals", {})
+        except Exception:
+            _SIGNAL_CACHE = {}
+    return _SIGNAL_CACHE
 
 # Vietnamese character range heuristic
 _RE_VIET = re.compile(r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]")
@@ -77,7 +77,7 @@ class InputPipeline:
         processed = pipe.process(raw_text, source="telegram", sender="user123")
     """
 
-    def process(self, text: str, *,
+    async def process(self, text: str, *,
                 source: str = "unknown",
                 sender: str = "unknown",
                 chat_id: str = "") -> ProcessedInput:
@@ -89,8 +89,8 @@ class InputPipeline:
         # 2) FINGERPRINT (single pass over clean text)
         fp = self._fingerprint(clean)
 
-        # 3) CLASSIFY content type
-        content_type = self._classify(clean, fp)
+        # 3) CLASSIFY content type (Brain-based)
+        content_type = await self._classify(clean, fp)
 
         # 4) RISK assessment
         risk_score, risk_flags = self._assess_risk(clean)
@@ -123,17 +123,9 @@ class InputPipeline:
 
     @staticmethod
     def _sanitize(text: str) -> str:
-        if not text:
-            return ""
-        # Unicode NFC normalization
-        text = unicodedata.normalize("NFC", text)
-        # Strip control characters (keep \n \r \t)
-        text = _RE_CONTROL.sub("", text)
-        # Remove zero-width characters (used for injection bypass)
-        text = _RE_ZWSP.sub("", text)
-        # Collapse excessive whitespace
-        text = _RE_MULTI_SPACE.sub("  ", text)
-        return text.strip()
+        """Unified sanitization via SecurityShield."""
+        from utils.security import SecurityShield
+        return SecurityShield.sanitize_text(text)
 
     # ── Stage 2: Fingerprint ───────────────────────────────────
 
@@ -183,18 +175,48 @@ class InputPipeline:
 
     # ── Stage 3: Classify ──────────────────────────────────────
 
-    @staticmethod
-    def _classify(text: str, fp: dict) -> str:
-        """Lightweight content type classification (no LLM)."""
-        if _GREETING_SIGNALS.search(text) and fp["word_count"] < 6:
+    async def _classify(self, text: str, fp: dict) -> str:
+        """Brain-first content type classification with Centralized Heuristics."""
+        if not text or fp["word_count"] == 0:
+            return "general"
+
+        # ── 1. CENTRALIZED REFLEX SIGNALS (Fast, Zero Latency) ──────────
+        signals = _get_signals()
+        
+        # Social
+        g_sig = signals.get("greeting", {}).get("pattern")
+        if g_sig and re.search(g_sig, text) and fp["word_count"] < 4:
             return "social"
-        if _CMD_SIGNALS.search(text):
+
+        # Command
+        c_sig = signals.get("command", {}).get("pattern")
+        if text.startswith("/") or (c_sig and re.search(c_sig, text) and fp["word_count"] < 8):
             return "command"
-        if _DATA_SIGNALS.search(text) and fp["word_count"] >= 3:
-            return "data"
-        if fp.get("has_question"):
-            return "question"
-        return "general"
+
+        # ── 2. BRAIN CLASSIFICATION (Main Logic) ──────────────────────────
+        with task_timer("Neural Input Classification"):
+            try:
+                from .brain.model import BrainModel
+                classifier = BrainModel(mode="classifier")
+                content = await classifier.think(f"User Message: \"{text}\"", mood="NEUTRAL", timeout=60.0)
+                
+                if content:
+                    valid_categories = {"question", "command", "social", "data", "general"}
+                    for cat in valid_categories:
+                        if cat in content.lower():
+                            return cat
+                
+                return "general"
+            except Exception as e:
+                logger.warning(f"[INPUT_PIPELINE] Brain Classification failed: {e}. Falling back to internal heuristics.")
+                # Final fallback via centralized signals
+                d_sig = signals.get("data", {}).get("pattern")
+                if d_sig and re.search(d_sig, text): return "data"
+                
+                q_sig = signals.get("question", {}).get("pattern")
+                if q_sig and re.search(q_sig, text): return "question"
+                
+                return "general"
 
     # ── Stage 4: Risk Assessment ───────────────────────────────
 

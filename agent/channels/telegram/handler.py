@@ -1,6 +1,6 @@
 import asyncio
 import re
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime
 from config.settings import settings
 from utils.logger import get_logger
@@ -23,6 +23,9 @@ class TelegramCommandHandler:
         self.channel = channel
         self.awareness = SpatialAwareness()
         self.input_pipeline = InputPipeline()
+        
+        # Async initialization task
+        self._init_task = asyncio.create_task(self.awareness.initialize())
         
         # Sync awareness to agent so brain can access it
         if agent:
@@ -51,7 +54,7 @@ class TelegramCommandHandler:
             sender_username = message.metadata.get("username", "")
             sender_name = message.sender_name or sender_username
             is_sender_bot = message.metadata.get("is_bot", False)
-            self.awareness.observe(sender_username, sender_name, is_sender_bot, message.chat_id, content)
+            await self.awareness.observe(sender_username, sender_name, is_sender_bot, message.chat_id, content)
             
             # FAST PRE-FILTER: If message @mentions someone else but NOT us → skip immediately
             # This saves ~15s of LLM processing for obvious "not for me" messages
@@ -71,16 +74,22 @@ class TelegramCommandHandler:
         # Update message content
         message.content = content
 
-        # 1. SECURITY SHIELD: Sanitize & Analyze Input
-        message.content = SecurityShield.sanitize_text(message.content)
+        # 1. INPUT PIPELINE: Sanitize, Fingerprint, Classify & Risk assessment
+        # Replaces SecurityShield.analyze_risk with a more comprehensive flow
+        processed = await self.input_pipeline.process(
+            message.content, 
+            source="telegram", 
+            sender=str(message.sender_id),
+            chat_id=str(message.chat_id)
+        )
         
-        # Risk Analysis (Log only for now, can block later)
-        risk_report = SecurityShield.analyze_risk(message.content, source=f"Telegram:{message.sender_id}")
-        if not risk_report["safe"]:
-            logger.warning(f"[SECURITY] High Risk Input detected: {risk_report['reasons']}")
-            # Optional: We could block here, but for now we assume sanitization handled the worst.
-            # If strictly dangerous (like SQL injection patterns), we might want to drop it.
-            if risk_report["score"] >= 20: # arbitrary high threshold
+        # Use sanitized content
+        message.content = processed.clean_text
+        
+        # Security: Block strictly dangerous inputs
+        if not processed.is_safe:
+            logger.warning(f"[SECURITY] High Risk Input detected: {processed.risk_flags}")
+            if processed.risk_score >= 0.6:
                 return "🚫 Security Shield: Malicious pattern detected in your message. Action blocked."
 
         # OWNER-ONLY RESTRICTION (Relaxed for bots in group)
@@ -128,8 +137,8 @@ class TelegramCommandHandler:
                 logger.error(f"[TELEGRAM] Command error: {e}")
                 response = await self._generate_brain_feedback(f"Error executing command: {e}", message)
         else:
-            # Fallback to chat if not a command
-            response = await self._cmd_chat(message.content, message)
+            # Fallback to chat if not a command (pass processed metadata)
+            response = await self._cmd_chat(message.content, message, processed=processed)
             
         # 2. SECURITY SHIELD: DLP (Data Leakage Prevention)
         # Scan outgoing response for sensitive data and redact it
@@ -180,43 +189,20 @@ class TelegramCommandHandler:
         # 3. Decision confirmation logic (Future expansion)
         # elif data.startswith("custom_action:"): ...
 
-        # 4. CLI Approval Actions
-        elif data.startswith("cli_approve:") or data.startswith("cli_deny:"):
-            action = "APPROVE" if data.startswith("cli_approve:") else "DENY"
-            # Command is base64 encoded to safely pass through callback_data
-            import base64
-            try:
-                encoded_cmd = data.split(":", 1)[1]
-                command = base64.b64decode(encoded_cmd).decode('utf-8')
-                
-                if action == "DENY":
-                    return await self._generate_brain_feedback(f"Understood! I will never run command `{command}` without {settings.user_pronoun}'s approval. Security first! 🛡️⚖️", message)
-                
-                # Execute the approved command
-                from tools.shell_executor import ShellExecutor
-                await self.channel.send(f"🚀 *Approved!* Executing: `{command}`...", recipient=message.chat_id)
-                result = await ShellExecutor.execute(command)
-                
-                status_emoji = "✅" if result["success"] else "❌"
-                feedback = (
-                    f"{status_emoji} *Command Execution Result*\n"
-                    f"• Command: `{command}`\n"
-                    f"• Status: `{'Success' if result['success'] else 'Failed (Code ' + str(result['exit_code']) + ')'}`\n"
-                )
-                if result.get("stdout"):
-                    feedback += f"\n📄 *Output:*\n```\n{result['stdout'][:500]}\n```"
-                if result.get("stderr"):
-                    feedback += f"\n⚠️ *Error:*\n```\n{result['stderr'][:500]}\n```"
-                    
-                return feedback
-
-            except Exception as e:
-                logger.error(f"[TELEGRAM] CLI approval error: {e}")
-                return f"❌ Error processing command approval: {e}"
+        # 4. Centralized Approval Actions (CLI, System, etc.)
+        from utils.notification import NotificationManager
+        approval_response = await NotificationManager.handle_approval_callback(
+            data=data,
+            channel=self.channel,
+            sender_id=message.sender_id
+        )
+        
+        if approval_response:
+            return approval_response
 
         return await self._generate_brain_feedback(f"{settings.bot_pronoun.capitalize()} không hiểu tương tác này lắm, {settings.user_pronoun} kiểm tra lại giúp {settings.bot_pronoun} nhé.", message)
 
-    async def _cmd_chat(self, text: str, msg: Message) -> str:
+    async def _cmd_chat(self, text: str, msg: Message, processed: Any = None) -> str:
         """Handle direct chat messages with immediate feedback"""
         if self.agent:
             chat_id = str(msg.chat_id)
@@ -244,8 +230,13 @@ class TelegramCommandHandler:
                 await self.agent.memory.record_chat_message(chat_id, "user", text)
                 logger.debug(f"[TELEGRAM] Forwarding to agent: '{text[:50]}...'")
                 
-                # CRITICAL: BrainAgent.chat returns the 'response' value directly (str or dict)
-                response = await self.agent.chat(text, chat_id)
+                # CRITICAL: Pass the FULL ProcessedInput object to preserve metadata
+                # Pass context to ensure channel is set to 'telegram'
+                response = await self.agent.chat(
+                    processed or text, 
+                    chat_id, 
+                    context={"channel": "telegram"}
+                )
                 
                 # --- NGO FIX: Support silent background offloading ---
                 if response is None:
@@ -272,7 +263,11 @@ class TelegramCommandHandler:
         instruction = f"[INTERNAL_SYSTEM_UPDATE] {context_msg}. Please respond to the User in your style (English only)."
         
         try:
-            response = await self.agent.chat(instruction, chat_id)
+            response = await self.agent.chat(
+                instruction, 
+                chat_id, 
+                context={"channel": "telegram"}
+            )
             if isinstance(response, dict):
                 return response.get("text", "System: Action completed successfully.")
             return str(response)

@@ -24,8 +24,11 @@ langchain-core>=0.1.0
 langgraph>=0.0.40
 langchain-community>=0.0.20
 
-# LLM Integration (Ollama)
+# LLM Integrations
 langchain-ollama>=0.1.0
+langchain-openai>=0.1.0
+langchain-anthropic>=0.1.0
+langchain-groq>=0.1.0
 mcp>=0.1.0
 
 # Cryptography

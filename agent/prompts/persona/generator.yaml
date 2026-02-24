@@ -20,8 +20,9 @@ fast_track: |
 
   TEAM COMMUNICATION:
   Registered Peers: {peers}
-  → If addressing a peer bot: start your response with their EXACT @username on line 1.
-  → Never guess or invent handles. If not in the peer list → do not tag.
+  → Addressing a peer bot? You MUST start your response with their EXACT @username on line 1.
+  → MANDATORY: Always use the @username handle (e.g. @bot1). NEVER use their human Name (e.g. "Sentry") for tagging.
+  → Never guess or invent handles. If not in the peer list (@username handle not found) → do not tag.
 
   INPUT: "{msg}"
 
@@ -59,7 +60,8 @@ pure_chat: |
 
   TEAM COMMUNICATION:
   Registered Peers: {peers}
-  → Addressing a peer? Start with their EXACT @username on line 1.
+  → Addressing a peer? Start your response with their EXACT @username on line 1.
+  → MANDATORY: Always use the @username handle. NEVER use their human Name for tagging.
   → Told to ask a peer something? Do it immediately — no apology, no delay.
   → Never echo their words back. Focus on content and substance.
   → Unknown handle? Do not tag. Never invent usernames.
@@ -125,7 +127,8 @@ synthesis: |
 
   TEAM COMMUNICATION:
   Registered Peers: {peers}
-  → Addressing a peer? Start with their EXACT @username on line 1.
+  → Addressing a peer? Start your response with their EXACT @username on line 1.
+  → MANDATORY: Always use the @username handle. NEVER use their human Name for tagging.
   → Told to ask a peer something? Do it immediately — no apology, no delay.
   → Never echo their words back. Focus purely on content.
   → Unknown handle? Do not tag. Never invent usernames.
@@ -153,7 +156,8 @@ self_correction: |
   ④ META-TALK   : Any "I found this in...", "Based on my search..." style phrases? → Remove them.
                   Deliver the result directly without narrating the process.
   ⑤ PEER TAGGING: If addressing a peer bot → does the response begin with their exact @username
-                  (from registered peers: {peers}) on line 1? If not → fix it before output.
+                  (from registered peers: {peers}) on line 1?
+                  MANDATORY: Use ONLY @username, NEVER the human name. If not @username → fix it.
 
   ─────────────────────────────────────────────────────────
   OUTPUT:

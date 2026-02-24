@@ -482,33 +482,6 @@ class TelegramChannel(Channel):
             recipient=recipient,
             keyboard=keyboard
         )
-
-    async def request_cli_approval(self, command: str, reason: str) -> bool:
-        """
-        Request approval for a CLI command from the Boss.
-        """
-        recipient = self.admin_chat_id
-        if not recipient: return False
-        
-        import base64
-        encoded_cmd = base64.b64encode(command.encode('utf-8')).decode('utf-8')
-        
-        keyboard = {
-            "inline_keyboard": [[
-                {"text": "🚀 Đồng ý chạy", "callback_data": f"cli_approve:{encoded_cmd}"},
-                {"text": "🚫 Từ chối", "callback_data": f"cli_deny:{encoded_cmd}"}
-            ]]
-        }
-        
-        message = (
-            f"⚖️ *Niva Pro CLI: Yêu cầu phê duyệt lệnh*\n\n"
-            f"• *Lệnh:* `{command}`\n"
-            f"• *Lý do:* _{reason}_\n\n"
-            f"{settings.user_pronoun} có cho phép {settings.bot_pronoun} thực thi lệnh này không ạ? "
-            f"{settings.bot_pronoun.capitalize()} cam kết tuân thủ mọi quy tắc bảo mật của {settings.user_pronoun}! 🛡️"
-        )
-        
-        return await self.send(message, recipient=recipient, keyboard=keyboard)
         
     async def send_action_result(self, action: str, target: str, success: bool, details: str = ""):
         """Send notification about an action result"""

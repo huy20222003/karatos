@@ -38,10 +38,11 @@ class ConfidenceEngine:
         "semantic": 1.0,  # S1: Intent registry match
         "ppf": 1.2,       # S2: PPF classifier (slightly higher — it has learning)
         "history": 0.8,   # S3: Recent query similarity
+        "conscious": 1.5, # S4: LLM/Conscious reasoning (highest weight when present)
     }
     
     # Confidence tiers
-    TIER_AUTO = 0.80    # Skip LLM entirely
+    TIER_AUTO = 0.85    # Phase 21.3: Raised slightly for Bayesian precision
     TIER_BRIEF = 0.50   # Use lightweight LLM prompt
     # Below 0.50 → Full LLM reasoning
     
@@ -59,25 +60,18 @@ class ConfidenceEngine:
         intent_match: Optional[str] = None,
         intent_similarity: float = 0.0,
         heuristic_score: float = 0.0,
+        conscious_signal: float = 0.0,
     ) -> dict:
         """
-        Compute multi-signal confidence for routing.
+        Compute multi-signal confidence using Bayesian Fusion.
         
-        Returns:
-            {
-                "tier": "auto" | "brief" | "full",
-                "confidence": float,
-                "predicted_decision": str | None,
-                "signals": {"semantic": float, "ppf": float, "history": float, "heuristic": float}
-            }
+        Args:
+            conscious_signal: LLM reported confidence or estimated certainty.
         """
         signals = {}
         
         # --- S1: Semantic Intent Match ---
-        if intent_match and intent_similarity > 0:
-            signals["semantic"] = min(intent_similarity, 1.0)
-        else:
-            signals["semantic"] = 0.0
+        signals["semantic"] = min(intent_similarity, 1.0) if intent_match else 0.0
         
         # --- S2: PPF Classifier ---
         signals["ppf"] = ppf_confidence if ppf_decision else 0.0
@@ -85,16 +79,46 @@ class ConfidenceEngine:
         # --- S3: History Pattern Match ---
         signals["history"] = self._compute_history_signal(user_message)
         
-        # --- S4: Heuristic/Rule-based Signal ---
+        # --- S4: Heuristic Signal ---
         signals["heuristic"] = heuristic_score
         
-        # --- Fusion: Weighted Geometric Mean ---
-        confidence = self._weighted_geometric_mean(signals)
+        # --- S5: Conscious Signal (LLM Reasoning) ---
+        signals["conscious"] = conscious_signal
+
+        # --- Fusion: Bayesian Update Logic ---
+        # intuition = weighted geo-mean of automated signals
+        intuition_signals = {k: v for k, v in signals.items() if k != "conscious"}
+        prior_confidence = self._weighted_geometric_mean(intuition_signals)
+        
+        if conscious_signal > 0:
+            # posterior = Bayesian fusion of prior (intuition) and likelihood (reasoning)
+            confidence = self._bayesian_fusion(prior_confidence, conscious_signal)
+            
+            # --- Dissonance Detection ---
+            # If intuition and reasoning are far apart, penalize the result
+            dissonance = abs(prior_confidence - conscious_signal)
+            if dissonance > 0.5:
+                penalty = 0.85 # 15% penalty for high cognitive dissonance
+                confidence *= penalty
+                logger.warning(f"[ACR] High Cognitive Dissonance detected ({dissonance:.2f}). Penalizing confidence.")
+        else:
+            confidence = prior_confidence
         
         # --- Determine Tier ---
-        if confidence >= self.TIER_AUTO:
+        # --- Determine Tier (Neural Thresholds) ---
+        # Instead of fixed constants, we adjust thresholds based on cognitive state.
+        # High energy = more confident = lower threshold for auto.
+        # Low energy = more cautious = higher threshold for auto.
+        energy = conscious_signal if conscious_signal > 0 else 0.8 # approx 
+        
+        # Dynamic Auto-route threshold: 0.85 baseline, adjusted by energy/mood
+        # (Lower threshold means easier to auto-route)
+        current_tier_auto = 0.85 - (max(0, energy - 0.5) * 0.1)
+        current_tier_brief = 0.50 - (max(0, energy - 0.5) * 0.05)
+        
+        if confidence >= current_tier_auto:
             tier = "auto"
-        elif confidence >= self.TIER_BRIEF:
+        elif confidence >= current_tier_brief:
             tier = "brief"
         else:
             tier = "full"
@@ -104,9 +128,10 @@ class ConfidenceEngine:
         
         result = {
             "tier": tier,
-            "confidence": confidence,
+            "confidence": round(confidence, 4),
             "predicted_decision": predicted,
             "signals": signals,
+            "dissonance": abs(prior_confidence - conscious_signal) if conscious_signal > 0 else 0
         }
         
         # Log signals compactly
@@ -119,7 +144,23 @@ class ConfidenceEngine:
         
         return result
     
+    def _bayesian_fusion(self, prior: float, likelihood: float) -> float:
+        """
+        Principle: P(A|B) = P(B|A)P(A) / P(B)
+        Approximated for confidence fusion:
+        New Confidence = (P1 * P2) / (P1*P2 + (1-P1)*(1-P2))
+        """
+        # Clamping to avoid division by zero or log of zero
+        p1 = max(min(prior, 0.999), 0.001)
+        p2 = max(min(likelihood, 0.999), 0.001)
+        
+        numerator = p1 * p2
+        denominator = (p1 * p2) + ((1 - p1) * (1 - p2))
+        
+        return numerator / denominator
+
     def record_query(self, user_message: str, decision: str, was_correct: bool = True):
+
         """Record a completed query for history matching and weight adaptation."""
         self._recent_queries.append({
             "message": user_message,
@@ -214,13 +255,14 @@ class ConfidenceEngine:
         
         # Phase 21.0: Smarter coverage factor.
         # Don't penalize too hard if only one signal is active (common for new queries).
-        # We use a non-linear scaling: 1 signal -> 0.7x, 2 -> 0.9x, 3+ -> 1.0x
-        coverage_map = {1: 0.70, 2: 0.90, 3: 1.0, 4: 1.0}
+        # Phase 21.3: Adjusted for better human-like baseline.
+        coverage_map = {1: 0.85, 2: 0.95, 3: 1.0, 4: 1.0}
         coverage_factor = coverage_map.get(active_count, 1.0)
         
         raw = math.exp(log_sum / total_weight)
         
         return raw * coverage_factor
+
     
     def _adapt_weights(self):
         """

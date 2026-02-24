@@ -71,6 +71,39 @@ class SecurityShield:
         "config/rules.py"
     ]
 
+    # Source code extensions for logic/config
+    SOURCE_CODE_EXTENSIONS = [
+        # Programming & Scripts
+        ".py", ".pyi", ".pyx", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", 
+        ".sh", ".bash", ".ps1", ".bat", ".cmd", ".php", ".rb", ".go", ".rs", ".c", ".cpp", ".h", ".hpp",
+        # Configuration & Data Structure
+        ".yaml", ".yml", ".json", ".jsonl", ".toml", ".ini", ".xml", ".env", ".env.local", ".env.production",
+        # Web & Styles
+        ".html", ".htm", ".css", ".scss", ".sass", ".less",
+        # Database & Infrastructure
+        ".sql", ".prisma", ".dockerfile", ".makefile", ".gitignore", ".gitattributes",
+        # Project Manifests
+        "package.json", "package-lock.json", "composer.json", "go.mod", "cargo.toml"
+    ]
+
+    # Path-based security (Phase 23)
+    _BLOCKED_PATH_PATTERNS = [
+        # Windows (Case-insensitive) - Match as a full path or drive-relative
+        r"(?i)\b[a-zA-Z]:\\Windows\b",
+        r"(?i)\b[a-zA-Z]:\\Program Files\b",
+        r"(?i)\b[a-zA-Z]:\\ProgramData\b",
+        r"(?i)\b[a-zA-Z]:\\Users\\All Users\b",
+        r"(?i)\b[a-zA-Z]:\\recovery\b",
+        # Windows shortcuts/common system paths
+        r"(?i)%SYSTEMROOT%",
+        r"(?i)%PROGRAMFILES%",
+        r"(?i)%WINDIR%",
+        # Linux/Unix-style paths (Check for common root-level system folders)
+        r"(?:^|[\s\"'])/(?:etc|proc|sys|dev|boot|root|sbin|usr/sbin|var/mail|var/spool)(?:$|[\s/\"'])"
+    ]
+    
+    _RE_BLOCKED_PATHS = [re.compile(p) for p in _BLOCKED_PATH_PATTERNS]
+
     @staticmethod
     def detect_suspicious_encoding(content: str) -> dict:
         """
@@ -199,7 +232,8 @@ class SecurityShield:
         "git status", "git branch", "git log -n 5",
         "git add", "git commit", "git push", "git pull", "git checkout",
         "python --version", "pip --version", "npm --version", "node --version",
-        "echo", "cat", "grep", "pnpm --version"
+        "echo", "cat", "grep", "pnpm --version",
+        "mv", "move", "ren", "rename", "mkdir", "rmdir"
     ]
     
     DANGEROUS_COMMANDS = [
@@ -227,19 +261,70 @@ class SecurityShield:
         if any(p in cmd_base for p in SecurityShield.DANGEROUS_PATTERNS) or any(p in cmd_base for p in SecurityShield.DANGEROUS_COMMANDS):
              return {"status": "blocked", "reason": f"Command '{cmd_base}' is explicitly blocked for security reasons."}
 
-        # 3. Check against Allowlist
+        # 3. Path-based Security (Phase 23)
+        # Check if the command contains any blocked system paths BEFORE checking allowlist
+        path_report = SecurityShield.validate_path_safety(cmd_lower)
+        if not path_report["safe"]:
+             return {"status": "blocked", "reason": path_report["reason"]}
+
+        # 4. Check against Allowlist
         if any(cmd_lower.startswith(safe) for safe in SecurityShield.SAFE_COMMANDS):
              return {"status": "safe", "reason": "Command is in the verified allowlist."}
 
-        # 4. Special Case: Allow Safe Info-gathering Flags (Learning Mode)
+        # 5. Special Case: Allow Safe Info-gathering Flags (Learning Mode)
         # Allows commands like 'anytool --help' or 'anytool --version' to enable self-learning
         if any(f in cmd_lower for f in ["--help", "-h", "--version", "-v"]):
              # Ensure it's not a complex command (no spaces or unusual patterns after flag)
              # and the base command isn't in dangerous list
              return {"status": "safe", "reason": "Permitted info-gathering flag for self-learning flow."}
 
-        # 5. Default to Unsafe (Requires Approval)
+        # 6. Default to Unsafe (Requires Approval)
         return {"status": "unsafe", "reason": "Command is not in the allowlist and requires manual approval from the administrator."}
+
+    @staticmethod
+    def is_source_code_path(path: str) -> bool:
+        """
+        Check if a given path corresponds to agent source code or configuration.
+        """
+        if not path: return False
+        
+        path_lower = path.lower()
+        
+        # 1. Exact matches in PROTECTED_FILES
+        if any(protected in path_lower for protected in SecurityShield.PROTECTED_FILES):
+            return True
+            
+        # 2. Extension-based check
+        import os
+        _, ext = os.path.splitext(path_lower)
+        if ext in SecurityShield.SOURCE_CODE_EXTENSIONS:
+            # We check if it's within the agent's logic directories
+            # (Essentially anything that isn't data/logs/temp)
+            excluded_dirs = ["logs", "tmp", "data", "storage", ".gemini", "node_modules"]
+            if not any(f"\\{d}\\" in path_lower or f"/{d}/" in path_lower for d in excluded_dirs):
+                return True
+                
+        return False
+
+    @staticmethod
+    def validate_path_safety(content: str) -> dict:
+        """
+        Detect attempts to access or modify restricted system paths.
+        Simplified check for CLI commands.
+        """
+        if not content: return {"safe": True}
+        
+        # Check for blocked path patterns
+        for pat in SecurityShield._RE_BLOCKED_PATHS:
+            if pat.search(content):
+                return {"safe": False, "reason": f"Access to system path detected (matched pattern: {pat.pattern})."}
+        
+        # Check for path traversal attempts leading to root-level access (heuristic)
+        if "../.." in content and (content.strip().startswith("/") or content.strip().startswith("C:\\")):
+             # Extremely suspicious if starting from root and using traversal
+             return {"safe": False, "reason": "Suspicious path traversal detected while referencing root."}
+
+        return {"safe": True}
 
     @staticmethod
     def analyze_risk(content: str, source: str = "Unknown") -> dict:
@@ -259,14 +344,24 @@ class SecurityShield:
                 risk_score += 10
                 reasons.append("Matched dangerous code pattern")
         
-        # 1a. Protected Files Violation (Critical)
+        # 1a. Source Code Protection (Critical - SEC_006)
+        # Scan for any substring that looks like a file path and check it
+        # Patterns like: agent/core/identity.py, ./config/rules.json, etc.
+        potential_paths = re.findall(r"[a-zA-Z0-9_\.\-/\\:]{5,}", content)
+        for p in potential_paths:
+            if SecurityShield.is_source_code_path(p):
+                 risk_score += 100
+                 reasons.append(f"SEC_006 VIOLATION: Source code path '{p}' detected in action. Autonomous modification forbidden.")
+                 break
+
+        # 1b. Protected Files Violation (Critical)
         for protected in SecurityShield.PROTECTED_FILES:
             if protected in content:
                 # If command/script mentions a protected file, block it
                 risk_score += 100
                 reasons.append(f"PROTECTION VIOLATION: Accessing protected file '{protected}' is strictly forbidden.")
         
-        # 2. CLI Validation (Commands, Redirection, Piping)
+        # 2. CLI Validation (Commands, Redirection, Piping, Paths)
         # We split multi-commands (e.g. cmd1 ; cmd2) and check each
         commands_to_check = re.split(r'[;&|]', content)
         for cmd in commands_to_check:
@@ -274,6 +369,12 @@ class SecurityShield:
             if cli_report["status"] == "blocked":
                 risk_score += 20
                 reasons.append(f"CLI Block: {cli_report['reason']}")
+            
+            # Additional layer: Path Safety (in case it wasn't a standard command)
+            path_report = SecurityShield.validate_path_safety(cmd)
+            if not path_report["safe"]:
+                risk_score += 50
+                reasons.append(f"Path Block: {path_report['reason']}")
 
         # 3. Prompt Injection
         injection_report = SecurityShield.detect_prompt_injection(content)

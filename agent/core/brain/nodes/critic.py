@@ -64,9 +64,14 @@ async def critic_node(state: AgentState) -> AgentState:
     target_type = decision.get("target_type", "USER" if (state.get("chat_id") or state.get("context", {}).get("chat_id")) else "SYSTEM")
 
     # NGO: Reverted hardcoded confidence. The brain should provide this via the planner.
-    confidence = decision.get("confidence", 0)
+    # Phase 21.1: Use state-level confidence if step-level is missing
+    confidence = decision.get("confidence")
+    if confidence is None:
+        confidence = state.get("confidence", 0)
+        logger.debug(f"[CRITIC] Using state-level confidence fallback: {confidence}")
     
     logger.thought(f"Internal Critic is reviewing decision: {proposed_action} on {target_id} (Confidence: {confidence})...")
+
 
     from ..prompts.registry import get_prompt_registry
     registry = get_prompt_registry()
@@ -74,6 +79,11 @@ async def critic_node(state: AgentState) -> AgentState:
     from core.identity import AgentIdentity
     identity = AgentIdentity()
     
+    # EXTRACTION: Get params or args for the critic to see
+    params = decision.get("params", decision.get("args", {}))
+    # If it's a raw SQL auto-wrap, the key might be in params['query']
+    proposed_details = json.dumps(params, ensure_ascii=False) if params else "None provided"
+
     prompt = registry.get(
         "system.autonomous.critic",
         target_type=target_type,
@@ -81,6 +91,7 @@ async def critic_node(state: AgentState) -> AgentState:
         target_reason=decision.get("thought") or decision.get("reason") or "No explicit reason provided by planner.",
         evidence_summary=evidence_summary,
         proposed_action=proposed_action,
+        proposed_details=proposed_details,
         confidence=int(confidence * 100) if isinstance(confidence, float) else confidence,
         mood=state.get('mood', 'OPTIMISTIC'),
         sovereignty_principles=identity.sovereignty_principles,

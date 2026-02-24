@@ -6,11 +6,12 @@ description: >
   Use this for:
   - System-level information gathering (disk usage, process list, environment info)
   - Service monitoring commands (pm2 status, systemctl, etc.)
-  - File operations (ls, cat, mv — non-destructive)
+  - File operations (ls, cat, mv, mkdir — non-destructive) across all non-system drives/folders
   - Git operations (via git_control skill which dispatches here)
   - Running CLI tools after confirming their usage via WEB:RESEARCH
   
   SAFETY RULES (non-negotiable):
+  - System directories (e.g. C:\Windows, /etc) are strictly BLOCKED and monitored.
   - Destructive commands are FORBIDDEN: rm -rf, DROP, format, mkfs, kill -9 (without confirmation)
   - Unknown CLI tools → STOP → use WEB:RESEARCH to understand the tool first → then propose
   - Always prefer dry-run or info flags first: --help, --dry-run, -v, status

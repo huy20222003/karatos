@@ -49,7 +49,7 @@ async def chat_plan_node(state: ChatState) -> ChatState:
     # Contextual awareness: Optimized history (Summary + Recent) via ContextManager
     from memory.context import ConversationContextManager
     ctx_manager = ConversationContextManager(char_limit_per_message=1000, total_history_limit=3000)
-    history_str = await ctx_manager.get_optimized_history(state["chat_id"], state["context"]["memory"], limit=5)
+    history_str = await ctx_manager.get_optimized_history(state["chat_id"], state["context"]["memory"], limit=settings.context_planning_limit)
 
     # --- FULL CONTEXT: Enable all tools for strategic planning ---
     tool_schemas = await registry.get_tool_schemas()
@@ -95,18 +95,22 @@ async def chat_plan_node(state: ChatState) -> ChatState:
     tool_calls = await model.think(prompt, phase="planning", mood=state.get('mood', 'OPTIMISTIC'), energy=state.get('energy_level', 1.0), tools=[create_plan])
     
     from ..utils import parse_tool_call_robust
-    tool_args = parse_tool_call_robust(tool_calls, "create_plan")
+    # Pass current state confidence as base for auto-wrapping
+    tool_args = parse_tool_call_robust(tool_calls, "create_plan", base_confidence=state.get("confidence", 0.0))
     plan = tool_args.get("steps", [])
+
             
-    if not isinstance(plan, list) or not plan:
-        # Emergency debug for live run
+    if not isinstance(plan, list):
+        # Emergency debug for real malformed output
         from ..utils import get_llm_content
         raw_content = get_llm_content(tool_calls)
-        logger.error(f"[PLANNER_FATAL] Model returned content but no valid plan found. Raw Snippet: {raw_content[:200]}")
-        
-        # Fallback plan if tool call fails or returns empty
-        logger.warning(f"[PLANNER] Failed to generate a valid plan for: {msg[:50]}...")
-        state["planning_thought"] = "Planning failed (no tool call or empty plan), defaulting to chat."
+        logger.error(f"[PLANNER_FATAL] Model returned malformed content. Raw Snippet: {raw_content[:200]}")
+        state["planning_thought"] = "Planning failed (malformed output)."
+        state["needs_planning"] = False
+    elif not plan:
+        # Planner intentionally decided no tool is needed (e.g. Rule IV in planner.yaml)
+        logger.info(f"[PLANNER] Model decided no tools are needed for this request.")
+        state["planning_thought"] = "Planner decided no tool-based actions are required."
         state["needs_planning"] = False
     else:
         state["plan"] = plan
