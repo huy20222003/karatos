@@ -237,11 +237,8 @@ class TelegramChannel(Channel):
         if parse_mode == "Markdown":
             text_to_send = self.normalize_markdown(text_to_send)
 
-        # Smart underscore escaping: Only escape bare underscores that break Telegram V1 parser
-        # Do NOT escape *, `, [ — those are intentional markdown formatting
+        # Smart underscore escaping: Already handled inside normalize_markdown for V1 consistency
         safe_text = text_to_send
-        if parse_mode == "Markdown" and "_" in text_to_send:
-            safe_text = self._escape_underscores(text_to_send)
 
         try:
             params = {
@@ -303,7 +300,8 @@ class TelegramChannel(Channel):
         photo_bytes: bytes,
         caption: str = "",
         recipient: Optional[str] = None,
-        parse_mode: str = "Markdown"
+        parse_mode: str = "Markdown",
+        **kwargs
     ) -> bool:
         """Send a photo via Telegram"""
         chat_id = recipient or self.admin_chat_id
@@ -327,6 +325,9 @@ class TelegramChannel(Channel):
                     safe_caption = safe_caption[:1021] + "..."
                 data.add_field('caption', safe_caption)
                 data.add_field('parse_mode', parse_mode)
+            
+            if "keyboard" in kwargs:
+                data.add_field('reply_markup', json.dumps(kwargs["keyboard"]))
 
             async with self._session.post(url, data=data) as response:
                 result = await response.json()
@@ -383,7 +384,7 @@ class TelegramChannel(Channel):
         code_blocks = []
         def save_code_block(match):
             code_blocks.append(match.group(0))
-            return f"__CODE_BLOCK_{len(code_blocks)-1}__"
+            return f"PROTECTEDCODEBLOCK{len(code_blocks)-1}PTC"
         
         # Multi-line code blocks
         text = re.sub(r'```[\s\S]*?```', save_code_block, text)
@@ -398,10 +399,14 @@ class TelegramChannel(Channel):
         
         # 4. Convert bullet lists to use bullet character
         text = re.sub(r'^(\s*)[-*]\s+', r'\1• ', text, flags=re.MULTILINE)
+
+        # 5. SMART ESCAPING: Escape bare underscores while code blocks are PROTECTED
+        if "_" in text:
+            text = self._escape_underscores(text)
         
-        # 5. Restore code blocks
+        # 6. Restore code blocks
         for i, block in enumerate(code_blocks):
-            text = text.replace(f"__CODE_BLOCK_{i}__", block)
+            text = text.replace(f"PROTECTEDCODEBLOCK{i}PTC", block)
         
         return text
 
@@ -411,38 +416,44 @@ class TelegramChannel(Channel):
         return text.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`").replace("[", "\\[")
 
     def _escape_underscores(self, text: str) -> str:
-        """Escape only underscores that are NOT part of _italic_ markdown.
-        Preserves intentional formatting while fixing technical strings like variable_names."""
+        """Escape underscores that are NOT part of identifiers, filenames or paths.
+        In V1, bare underscores are very risky. High-risk strings are wrapped in code backticks."""
         if not text: return ""
         import re as _re
         
-        # 1. Protect @usernames first so they don't get matched as italics
-        # We replace them with a placeholder, then restore
+        # 1. Protect @usernames separately (they shouldn't be backticked by default)
         usernames = []
         def save_username(match):
-            usernames.append(match.group(0).replace("_", "\\_"))
-            return f"@@USERNAME{len(usernames)-1}@@"
-            
+            usernames.append(match.group(0))
+            return f"PTCUSERNAME{len(usernames)-1}PTC"
         text = _re.sub(r'@[a-zA-Z0-9_]+', save_username, text)
         
-        # 2. Protect _italic_ pairs
-        parts = []
-        last_end = 0
-        for match in _re.finditer(r'_([^_]+)_', text):
-            # Escape bare underscores before this italic
-            before = text[last_end:match.start()].replace("_", "\\_")
-            parts.append(before)
-            parts.append(match.group(0))  # Keep _italic_ as-is
-            last_end = match.end()
-            
-        # 3. Escape remaining underscores after last italic
-        parts.append(text[last_end:].replace("_", "\\_"))
-        text = "".join(parts)
+        # 2. Identify and protect high-risk strings (filenames, paths, identifiers)
+        # These contain underscores and are surrounded by path/word characters.
+        # Support for Unicode (Vietnamese), dots, slashes, backslashes, colons.
+        protected_blocks = []
+        def save_protected(match):
+            protected_blocks.append(f"`{match.group(0)}`")
+            return f"PTCPROT{len(protected_blocks)-1}PTC"
         
-        # 4. Restore usernames
-        for i, uname in enumerate(usernames):
-            text = text.replace(f"@@USERNAME{i}@@", uname)
+        allowed = r'[a-zA-Z0-9\u00C0-\u1EF9\._\\/:-]'
+        path_regex = f'{allowed}*_{allowed}*'
+        text = _re.sub(path_regex, save_protected, text)
+        
+        # 3. Escape REMAINING bare underscores
+        text = text.replace("_", "\\_")
+        
+        # 4. Restore protected blocks
+        for i, val in enumerate(protected_blocks):
+            text = text.replace(f"PTCPROT{i}PTC", val)
             
+        # 5. Restore usernames and escape them if not already in code (unlikely given order)
+        for i, uname in enumerate(usernames):
+            placeholder = f"PTCUSERNAME{i}PTC"
+            if placeholder in text:
+                escaped_uname = uname.replace("_", "\\_")
+                text = text.replace(placeholder, escaped_uname)
+                
         return text
             
     async def send_notification(
@@ -543,15 +554,80 @@ class TelegramChannel(Channel):
         }
         return await self.send(report_text, recipient=recipient, keyboard=keyboard)
         
-    async def _api_call(self, method: str, params: dict = None) -> dict:
-        """Make a Telegram Bot API call"""
-        if not self._session: return {"ok": False, "error": "Not connected"}
+    async def _api_call(self, method: str, params: dict = None, retries: int = 3) -> dict:
+        """
+        Make a Telegram Bot API call with robust retry logic.
+        Handles:
+        - Network timeouts & connection errors
+        - Rate limits (429)
+        - Transient server errors (5xx)
+        """
+        if not self._session or self._session.closed:
+            logger.warning("[TELEGRAM] ClientSession is closed or missing. Attempting to reconnect...")
+            if not await self.connect():
+                return {"ok": False, "error": "Not connected"}
+
         url = f"{self.api_url}/{method}"
-        try:
-            async with self._session.post(url, json=params or {}) as response:
-                return await response.json()
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        attempt = 0
+        backoff = 1.0 # Start with 1s backoff
+
+        while attempt < retries:
+            attempt += 1
+            try:
+                async with self._session.post(url, json=params or {}, timeout=15) as response:
+                    # Case 1: Success
+                    if response.status == 200:
+                        return await response.json()
+                    
+                    # Case 2: Rate Limited (429)
+                    elif response.status == 429:
+                        data = await response.json()
+                        retry_after = data.get("parameters", {}).get("retry_after", backoff)
+                        logger.warning(f"[TELEGRAM] Rate limited (429). Retrying after {retry_after}s (Attempt {attempt}/{retries})")
+                        await asyncio.sleep(retry_after)
+                        continue
+                        
+                    # Case 3: Transient Server Error (5xx)
+                    elif response.status >= 500:
+                        logger.warning(f"[TELEGRAM] Server Error {response.status}. Retrying in {backoff}s... (Attempt {attempt}/{retries})")
+                        await asyncio.sleep(backoff)
+                        backoff *= 2
+                        continue
+                    
+                    # Case 4: Other request errors (4xx) - usually not retryable
+                    else:
+                        result = await response.json()
+                        logger.error(f"[TELEGRAM] API Error {response.status}: {result}")
+                        return result
+
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                # This catches the 'semaphore timeout', connection refused, dns issues, etc.
+                err_str = str(e) or repr(e)
+                logger.warning(f"[TELEGRAM] Network error on {method}: {err_str}. Retrying in {backoff}s... (Attempt {attempt}/{retries})")
+                
+                # If it's a semaphore/underlying connection issue, recreating the session MIGHT help
+                if "semaphore" in err_str.lower() or "closed" in err_str.lower():
+                    logger.info("[TELEGRAM] Critical connection error detected. Recreating session tracker.")
+                    await self.disconnect()
+                    await self.connect()
+
+                if attempt == retries:
+                    logger.error(f"[TELEGRAM] Max retries reached for {method}. Final error: {err_str}")
+                    # For long-polling getUpdates, a stuck connection can feel like a "lost" bot.
+                    # As a safety net, force a lightweight reconnect so the next loop starts clean.
+                    if method == "getUpdates":
+                        try:
+                            logger.info("[TELEGRAM] Forcing reconnect after repeated getUpdates timeouts...")
+                            await self.disconnect()
+                            await self.connect()
+                        except Exception as reconnect_err:
+                            logger.debug(f"[TELEGRAM] Reconnect after getUpdates failure also failed: {reconnect_err}")
+                    return {"ok": False, "error": err_str}
+                
+                await asyncio.sleep(backoff)
+                backoff *= 2
+        
+        return {"ok": False, "error": "Max retries exceeded"}
             
     async def _set_commands(self):
         """Set the bot commands menu"""
@@ -562,11 +638,139 @@ class TelegramChannel(Channel):
         else:
             logger.error(f"[TELEGRAM] Failed to register commands: {result}")
         
+    async def _download_file(self, file_id: str, file_name: str) -> Optional[str]:
+        """Download a file from Telegram into a temporary directory.
+        Returns local temp path or None. File is auto-cleaned by OS."""
+        try:
+            import tempfile
+            # 1. Get file path from Telegram
+            result = await self._api_call("getFile", {"file_id": file_id})
+            if not result.get("ok"):
+                logger.error(f"[TELEGRAM] getFile failed: {result}")
+                return None
+            
+            tg_file_path = result["result"]["file_path"]
+            download_url = f"https://api.telegram.org/file/bot{self.token}/{tg_file_path}"
+            
+            # 2. Download to temporary directory (auto-cleaned by OS)
+            # Using suffix to preserve file extension for type detection
+            import os
+            _, ext = os.path.splitext(file_name)
+            tmp_fd, local_path = tempfile.mkstemp(suffix=ext, prefix="niva_tmp_")
+            
+            async with self._session.get(download_url) as resp:
+                if resp.status == 200:
+                    with os.fdopen(tmp_fd, "wb") as f:
+                        f.write(await resp.read())
+                    logger.info(f"[TELEGRAM] File saved to temp: {local_path} (auto-cleanup)")
+                    return local_path
+                else:
+                    os.close(tmp_fd)
+                    os.unlink(local_path)
+                    logger.error(f"[TELEGRAM] File download HTTP {resp.status}")
+                    return None
+        except Exception as e:
+            logger.error(f"[TELEGRAM] File download error: {e}")
+            return None
+
+    async def get_file_bytes(self, file_id: str) -> Optional[bytes]:
+        """Fetch file bytes directly from Telegram API (In-memory)."""
+        try:
+            # 1. Get file path
+            result = await self._api_call("getFile", {"file_id": file_id})
+            if not result.get("ok"):
+                return None
+            
+            tg_file_path = result["result"]["file_path"]
+            download_url = f"https://api.telegram.org/file/bot{self.token}/{tg_file_path}"
+            
+            # 2. Stream to memory
+            async with self._session.get(download_url) as resp:
+                if resp.status == 200:
+                    return await resp.read()
+        except Exception as e:
+            logger.error(f"[TELEGRAM] get_file_bytes error: {e}")
+        return None
+
+    async def answer_callback_query(self, callback_query_id: str, text: Optional[str] = None, show_alert: bool = False):
+        """
+        Acknowledge a callback query to stop the loading state on the button.
+        Required by Telegram Bot API to provide immediate visual feedback.
+        """
+        params = {"callback_query_id": callback_query_id}
+        if text:
+            params["text"] = text
+            params["show_alert"] = show_alert
+            
+        logger.debug(f"[TELEGRAM] Answering callback {callback_query_id}")
+        return await self._api_call("answerCallbackQuery", params)
+
     def _parse_message(self, msg: dict) -> Message:
-        """Parse a Telegram message into our Message format"""
-        text = msg.get("text", "")
+        """Parse a Telegram message into our Message format.
+        Handles text, captions, and document/photo/audio uploads."""
+        # Priority: text > caption (for file messages)
+        text = msg.get("text") or msg.get("caption") or ""
         sender = msg.get("from", {})
         msg_type = MessageType.COMMAND if text.startswith("/") else MessageType.TEXT
+        
+        metadata = {
+            "username": sender.get("username"),
+            "is_bot": sender.get("is_bot", False),
+            "chat_type": msg.get("chat", {}).get("type"),
+            "thread_id": msg.get("message_thread_id")
+        }
+        
+        # Detect document uploads (DOCX, PDF, etc.)
+        doc = msg.get("document")
+        if doc:
+            metadata["document"] = {
+                "file_id": doc.get("file_id"),
+                "file_name": doc.get("file_name", "unknown_file"),
+                "mime_type": doc.get("mime_type", ""),
+                "file_size": doc.get("file_size", 0),
+            }
+            # If no caption, synthesize a description so the router sees something
+            if not text:
+                text = f"[User sent a file: {doc.get('file_name', 'unknown')}]"
+        # Detect photo uploads
+        photos = msg.get("photo")
+        if photos:
+            # Telegram sends multiple sizes, pick the largest
+            best_photo = photos[-1] if photos else None
+            if best_photo:
+                metadata["photo"] = {
+                    "file_id": best_photo.get("file_id"),
+                    "width": best_photo.get("width"),
+                    "height": best_photo.get("height"),
+                }
+                if not text:
+                    text = "[User sent a photo]"
+        
+        # Detect voice messages
+        voice = msg.get("voice")
+        if voice:
+            metadata["voice"] = {
+                "file_id": voice.get("file_id"),
+                "mime_type": voice.get("mime_type", ""),
+                "file_size": voice.get("file_size", 0),
+                "duration": voice.get("duration", 0)
+            }
+            if not text:
+                text = "[User sent a voice message]"
+                
+        # Detect audio files
+        audio = msg.get("audio")
+        if audio:
+            metadata["audio"] = {
+                "file_id": audio.get("file_id"),
+                "file_name": audio.get("file_name", "unknown_audio"),
+                "mime_type": audio.get("mime_type", ""),
+                "file_size": audio.get("file_size", 0),
+                "duration": audio.get("duration", 0)
+            }
+            if not text:
+                text = f"[User sent an audio file: {audio.get('file_name', 'audio')}]"
+        
         return Message(
             id=str(msg.get("message_id")),
             channel=self.name,
@@ -575,12 +779,7 @@ class TelegramChannel(Channel):
             sender_id=str(sender.get("id")),
             sender_name=sender.get("first_name", "Unknown"),
             chat_id=str(msg.get("chat", {}).get("id")),
-            metadata={
-                "username": sender.get("username"),
-                "is_bot": sender.get("is_bot", False),
-                "chat_type": msg.get("chat", {}).get("type"),
-                "thread_id": msg.get("message_thread_id")
-            }
+            metadata=metadata
         )
         
     def _parse_callback(self, callback: dict) -> Message:

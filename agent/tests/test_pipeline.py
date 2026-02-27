@@ -4,6 +4,7 @@ import sys
 import os
 import json
 from pathlib import Path
+import io
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -22,9 +23,13 @@ import logging
 logger = get_logger()
 logging.getLogger().setLevel(logging.DEBUG)
 
+# Ensure stdout uses UTF-8 to avoid UnicodeEncodeError on Windows consoles
+if hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+
 async def run_pipeline_test(user_query: str):
     print(f"\n{'='*50}")
-    print(f"🚀 STARTING PIPELINE TEST: '{user_query}'")
+    print(f"STARTING PIPELINE TEST: '{user_query}'")
     print(f"{'='*50}\n")
     
     start_total = time.time()
@@ -154,19 +159,26 @@ if __name__ == "__main__":
     
     # Test 2: Curly Brace Formatting Fix
     BRACE_QUERY = "Nêu ý nghĩa của dấu ngoặc nhọn { } trong JSON"
+
+    # Test 3: Time/Date should be CHAT using current_time metadata
+    TIME_QUERY = "Hôm nay là ngày bao nhiêu thế?"
     
     async def run_tests():
         await run_pipeline_test(QUERY)
         print("\n" + "#"*50)
-        print("🧪 TESTING FORMATTING FIX WITH CURLY BRACES")
+        print("TESTING FORMATTING FIX WITH CURLY BRACES")
         print("#"*50)
         await run_pipeline_test(BRACE_QUERY)
+        print("\n" + "#"*50)
+        print("TESTING TIME/DATE ROUTING (SHOULD BE CHAT)")
+        print("#"*50)
+        await run_pipeline_test(TIME_QUERY)
 
     try:
         asyncio.run(run_tests())
     except KeyboardInterrupt:
         print("\nTest stopped by user.")
     except Exception as e:
-        print(f"\n❌ TEST FAILED: {e}")
+        print(f"\nTEST FAILED: {e}")
         import traceback
         traceback.print_exc()

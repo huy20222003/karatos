@@ -158,6 +158,25 @@ class Settings(BaseSettings):
     )
 
     # ===========================================
+    # Claude Web Configuration
+    # ===========================================
+    claude_web_timeout_seconds: int = Field(
+        default=120,
+        description="Timeout in seconds for Claude Web requests",
+        alias="CLAUDE_WEB_TIMEOUT_SECONDS"
+    )
+    claude_web_model_name: str = Field(
+        default="claude-3-5-sonnet-20240620",
+        description="Model name for Claude Web",
+        alias="CLAUDE_WEB_MODEL_NAME"
+    )
+    claude_web_endpoint: str = Field(
+        default="http://localhost:8001/api/claude/direct",
+        description="Endpoint for Claude Web (internal proxy API)",
+        alias="CLAUDE_WEB_ENDPOINT"
+    )
+
+    # ===========================================
     # Groq Configuration
     # ===========================================
     groq_api_key: Optional[str] = Field(

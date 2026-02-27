@@ -1,13 +1,13 @@
 import os
-from typing import Optional
+from typing import Optional, List
 from langchain_ollama import ChatOllama
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage, BaseMessage
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.outputs import ChatResult, ChatGeneration
 from config.settings import settings
 from utils.logger import get_logger
 
 logger = get_logger()
-
-from langchain_core.language_models.chat_models import BaseChatModel
 
 class SharedModelProvider:
     _instance: Optional[BaseChatModel] = None
@@ -15,7 +15,9 @@ class SharedModelProvider:
     @classmethod
     def get_model(cls) -> BaseChatModel:
         if cls._instance is None:
-            provider = settings.llm_provider.lower()
+            # Normalize provider names to be flexible with config styles
+            # e.g. "claude-web" == "claude_web"
+            provider = (settings.llm_provider or "").lower().strip().replace("-", "_")
             
             if provider == "ollama":
                 from langchain_ollama import ChatOllama
@@ -77,6 +79,99 @@ class SharedModelProvider:
                     max_tokens=settings.model_max_tokens,
                     timeout=60.0
                 )
+            elif provider == "claude_web":
+                import httpx
+
+                class ClaudeWebChat(BaseChatModel):
+                    """LangChain chat adapter for the internal Claude web proxy."""
+
+                    endpoint: str = settings.claude_web_endpoint
+
+                    @property
+                    def _llm_type(self) -> str:
+                        return "claude_web"
+
+                    @property
+                    def _identifying_params(self) -> dict:
+                        return {"endpoint": self.endpoint}
+
+                    def _flatten_messages(self, messages: List[BaseMessage]) -> str:
+                        parts = []
+                        for m in messages:
+                            if isinstance(m, SystemMessage):
+                                parts.append(f"[SYSTEM]\n{m.content}")
+                            elif isinstance(m, HumanMessage):
+                                parts.append(f"[USER]\n{m.content}")
+                            elif isinstance(m, AIMessage):
+                                parts.append(f"[ASSISTANT]\n{m.content}")
+                            else:
+                                parts.append(str(getattr(m, "content", m)))
+                        return "\n\n".join(parts).strip()
+
+                    def _pick_model_override(self) -> Optional[str]:
+                        # Prefer a dedicated env var, else fall back to CLAUDE_DEFAULT_MODEL used by the proxy.
+                        return settings.claude_web_model_name
+
+                    def _generate(
+                        self,
+                        messages: List[BaseMessage],
+                        stop: Optional[list] = None,
+                        **kwargs,
+                    ) -> ChatResult:
+                        prompt = self._flatten_messages(messages)
+                        timeout = float(settings.claude_web_timeout_seconds)
+
+                        payload = {"prompt": prompt}
+                        model_override = self._pick_model_override()
+                        if model_override:
+                            payload["model"] = model_override
+
+                        with httpx.Client(timeout=timeout) as client:
+                            resp = client.post(self.endpoint, json=payload)
+                            resp.raise_for_status()
+                            data = resp.json()
+                            content = data.get("content", "")
+
+                        if stop:
+                            for s in stop:
+                                if s and s in content:
+                                    content = content.split(s)[0]
+                                    break
+
+                        ai_msg = AIMessage(content=content)
+                        return ChatResult(generations=[ChatGeneration(message=ai_msg)])
+
+                    async def _agenerate(
+                        self,
+                        messages: List[BaseMessage],
+                        stop: Optional[list] = None,
+                        **kwargs,
+                    ) -> ChatResult:
+                        prompt = self._flatten_messages(messages)
+                        timeout = float(settings.claude_web_timeout_seconds)
+
+                        payload = {"prompt": prompt}
+                        model_override = self._pick_model_override()
+                        if model_override:
+                            payload["model"] = model_override
+
+                        async with httpx.AsyncClient(timeout=timeout) as client:
+                            resp = await client.post(self.endpoint, json=payload)
+                            resp.raise_for_status()
+                            data = resp.json()
+                            content = data.get("content", "")
+
+                        if stop:
+                            for s in stop:
+                                if s and s in content:
+                                    content = content.split(s)[0]
+                                    break
+
+                        ai_msg = AIMessage(content=content)
+                        return ChatResult(generations=[ChatGeneration(message=ai_msg)])
+
+                logger.info("[MODEL_PROVIDER] Initializing Claude Web provider via internal API")
+                cls._instance = ClaudeWebChat()
             else:
                 raise ValueError(f"Unsupported LLM provider: {provider}")
 
@@ -92,7 +187,21 @@ class SharedModelProvider:
             return
             
         model = cls.get_model()
-        logger.info(f"[MODEL_PROVIDER] Pre-warming LLM '{settings.ollama_model_name}'...")
+        provider = (getattr(settings, "llm_provider", "") or "").lower().strip().replace("-", "_")
+        if provider == "ollama":
+            warm_name = getattr(settings, "ollama_model_name", "ollama")
+        elif provider == "openai":
+            warm_name = getattr(settings, "openai_model_name", "openai")
+        elif provider == "anthropic":
+            warm_name = getattr(settings, "anthropic_model_name", "anthropic")
+        elif provider == "groq":
+            warm_name = getattr(settings, "groq_model_name", "groq")
+        elif provider == "claude_web":
+            warm_name = getattr(settings, "claude_web_endpoint", "claude_web")
+        else:
+            warm_name = provider or "unknown"
+
+        logger.info(f"[MODEL_PROVIDER] Pre-warming provider '{provider}' ({warm_name})...")
         try:
             import asyncio
             import time
@@ -122,7 +231,7 @@ class BrainModel:
         self.identity = AgentIdentity()
         self.mode = mode
 
-    async def think(self, prompt: str, phase: str = None, mood: str = "OPTIMISTIC", energy: float = 1.0, timeout: float = None, tools: list = None):
+    async def think(self, prompt: str, phase: str = None, mood: str = "OPTIMISTIC", energy: float = 1.0, timeout: float = None, tools: list = None, **kwargs):
         """Standard thinking implementation using standard Langchain Message objects."""
         import asyncio
         from config.settings import settings
@@ -133,7 +242,13 @@ class BrainModel:
         
         # 2. Get system prompt for the specified phase (or use default mode)
         phase_to_use = phase or self.mode
-        system_prompt = self.identity.get_system_prompt(phase_to_use)
+        
+        # --- NGO FIX: Pass both the human prompt AND any extra context variables to the system prompt ---
+        # We include prompt=prompt by default but allowed it to be overridden by kwargs
+        system_kwargs = {"prompt": prompt}
+        system_kwargs.update(kwargs)
+        
+        system_prompt = self.identity.get_system_prompt(phase_to_use, **system_kwargs)
         
         # 3. Message Formatting (No Hardcoded ChatML)
         messages = [

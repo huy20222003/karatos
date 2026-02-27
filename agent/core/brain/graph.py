@@ -5,7 +5,6 @@ from langgraph.graph import StateGraph, END
 from config.settings import settings
 from utils.logger import get_logger
 from ..identity import AgentIdentity
-from langchain_ollama import OllamaLLM
 
 # Imports from modular brain
 from .state import AgentState, ChatState
@@ -39,21 +38,10 @@ class Brain:
     async def initialize(self) -> bool:
         """Initialize the brain and compile the graph"""
         try:
-            # Connect to Ollama
-            logger.info(f"Connecting to Ollama at {settings.ollama_base_url} (Model: {settings.ollama_model_name})...")
-            from langchain_ollama import ChatOllama
-            self.model = ChatOllama(
-                base_url=settings.ollama_base_url,
-                model=settings.ollama_model_name,
-                temperature=settings.model_temperature,
-                # ChatOllama specific params
-                timeout=60.0,
-                client_kwargs={"headers": settings.ollama_headers}
-            )
-            
-            # Register for singleton use
+            # Initialize the Brain's model using the configured provider.
+            # IMPORTANT: Do not hardcode Ollama here; SharedModelProvider handles provider selection.
             from .model import SharedModelProvider
-            SharedModelProvider.set_model(self.model)
+            self.model = SharedModelProvider.get_model()
             
             # Warmup is now handled by BrainAgent to prevent duplication.
             logger.info("Brain connection established")

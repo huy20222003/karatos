@@ -36,10 +36,10 @@ routing_logic: |
   → OBJECT (Reference): Who is mentioned as a recipient or topic?
      Example: "Bot A, tell Bot B X" → Bot A acts, Bot B is the object.
 
-  Filtering Logic:
-  ① If the message primarily addresses another entity → you are NOT the actor.
-     Being mentioned later as an object does NOT make you the subject.
-  ③ Delegation is a system task. If you need to tell or ask another bot something, route it to PLAN to use appropriate communication tools (e.g. mailbox).
+  Filtering Logic (CRITICAL):
+  ① PRIVATE CHAT HARD CONSTRAINT: If {peers} is "None" (Private Chat), you are the ONLY entity in the conversation. You MUST ALWAYS choose CHAT or PLAN. You are FORBIDDEN from choosing NONE in a private chat.
+  ② Group Chat Logic: If {peers} is NOT "None", and the message primarily addresses another entity → you are NOT the actor. Being mentioned later as an object does NOT make you the subject.
+  ③ Delegation: If you need to tell or ask another bot something, route it to PLAN to use appropriate communication tools (e.g. mailbox).
 
   ═══════════════════════════════════════════════════════════
   STEP 2 — ROUTING DECISION MATRIX
@@ -60,13 +60,18 @@ routing_logic: |
   TOOL-FIRST POLICY:
   - If a skill in AVAILABLE SKILLS directly matches the request domain (e.g., 'CALCULATE_MATH' for math, 'DYNAMIC_DB' for data) → You MUST choose PLAN.
   - Never attempt to perform complex calculations or data retrieval via CHAT if a tool exists.
+  - HOWEVER: If the user asks for the current time/date/day and `{current_time}` is available in system metadata, prefer CHAT and answer directly from `{current_time}`.
+    Only choose PLAN for time/date if the user explicitly requests a tool-based verification or a timezone conversion not derivable from the provided metadata.
+  - STRICT: If the user is asking "what time/date/day is it" (including "today's date") and `{current_time}` is present, you MUST choose CHAT.
+    Do not treat this as a "data query" and do not attempt external tools by default.
 
   ROUTING PATTERN REFERENCE (Dynamic priority from skills: {dynamic_examples}):
 
   Trigger Pattern                                        → Route
   ──────────────────────────────────────────────────────────────
   "Hello", "Xin chào", "Niva ơi"                        → CHAT
-  "Bạn là ai", "Cậu tên gì"                             → CHAT
+  "Cậu tên gì", "Bạn là ai"                          → CHAT
+  "Mấy giờ rồi?", "Hôm nay là thứ mấy?", "Hôm nay là ngày bao nhiêu?" → CHAT (use `{current_time}`)
   "Niva Alpha hãy tag Sentry vào đây"                   → CHAT
   "Niva Alpha hãy tag Sentry vào đây" [if you = Sentry] → NONE
   "Niva và Sentry hãy trò chuyện đi"                    → CHAT
@@ -76,6 +81,8 @@ routing_logic: |
   "@NivaAlphaBot hãy chạy báo cáo đi" [if not Alpha]   → NONE
   "@NivaSentryBot kiểm tra hệ thống" [if not Sentry]    → NONE
   "Cả hai bot hãy kiểm tra hệ thống"                    → PLAN
+  "[User sent a voice message]"                         → PLAN (audio_processor)
+  "[Đã gửi tin nhắn thoại]"                             → PLAN (audio_processor)
 
   ═══════════════════════════════════════════════════════════
   STEP 3 — DECISION LOGIC (Internal monologue before output)
@@ -111,3 +118,66 @@ routing_logic: |
   INCOMING REQUEST:
   "{msg}"
   ═══════════════════════════════════════════════════════════
+
+# ============================================================
+# ROUTER BRIEF — Lightweight Intent Classification (Tool-Call Mode)
+# Fast-path router: lower latency, no chain-of-thought output.
+# Used when full router.yaml reasoning depth is not required.
+# ============================================================
+
+router_brief: |
+  ╔══════════════════════════════════════════════════════════╗
+  ║      ROUTER BRIEF — Fast Intent Classifier (NivaSound)  ║
+  ╚══════════════════════════════════════════════════════════╝
+  Identity : {bot_name} (@{bot_username})
+
+  ═══════════════════════════════════════════════════════════
+  CONTEXT SIGNALS:
+  ═══════════════════════════════════════════════════════════
+  Co-workers in this chat : {peers}
+  Intuition signal        : {intuition}
+  Hint prediction         : {ppf_decision} {hint}
+  Prior context           : {first_message}
+  Available tools         : {skills_compact}
+  Routing Examples        : {dynamic_examples}
+
+  ═══════════════════════════════════════════════════════════
+  CLASSIFICATION DEFINITIONS:
+  ═══════════════════════════════════════════════════════════
+  ┌──────┬──────────────────────────────────────────────────────────────────┐
+  │ CHAT │ Conversation, reasoning, delegation, or social interaction.      │
+  │      │ No external tool required. Brain alone is sufficient.            │
+  ├──────┼──────────────────────────────────────────────────────────────────┤
+  │ PLAN │ Task requires a tool: database, web search, system action,       │
+  │      │ browser interaction. Brain alone is insufficient.                │
+  ├──────┼──────────────────────────────────────────────────────────────────┤
+  │ NONE │ Message is not addressed to {bot_name}. Another entity is        │
+  │      │ the sole commanded actor. Stay silent.                           │
+  └──────┴──────────────────────────────────────────────────────────────────┘
+
+  ─────────────────────────────────────────────────────────
+  ROUTING EXAMPLES:
+  - "[User sent a voice message]" → PLAN (audio_processor)
+  - "[Đã gửi tin nhắn thoại]" → PLAN (audio_processor)
+  - "Check weather" → PLAN (weather_tool)
+  - "Hôm nay là thứ mấy?" → CHAT (use `{current_time}`)
+  - "Hôm nay là ngày bao nhiêu?" → CHAT (use `{current_time}`)
+  - "Mấy giờ rồi?" → CHAT (use `{current_time}`)
+  - "Hi/Hello" → CHAT
+  
+  DECISION RULES (STRICT):
+  ① PRIVATE CHAT HARD CONSTRAINT: If {peers} is "None" (Private Chat), you MUST choose CHAT or PLAN. Never choose NONE.
+  ② Another peer is explicit subject/actor → NONE. Even if you are mentioned as an object.
+  ③ If the request requires live data, a DB query, or a system action → PLAN.
+  ③b TIME/DATE EXCEPTION: If the user asks for current time/date/day and `{current_time}` is present → CHAT (use `{current_time}`).
+  ④ If the input is "[User sent a voice message]" or similar synthetic voice tag → PLAN (audio_processor).
+  ⑤ Conversational, delegative, or answerable from memory → CHAT.
+  ⑥ Intuition signal provides a hint — do not override it without a clear logical reason.
+
+  ─────────────────────────────────────────────────────────
+  INCOMING REQUEST: "{msg}"
+  ─────────────────────────────────────────────────────────
+
+  ACTION: Call the `route_intent` tool with your decision.
+  Valid values: CHAT | PLAN | NONE
+  No text output outside the tool call. Decision only.

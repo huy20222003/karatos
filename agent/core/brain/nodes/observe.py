@@ -97,7 +97,8 @@ async def chat_observe_node(state: ChatState) -> ChatState:
                     "- If the answer is not present in the image, return the phrase: ANSWER_NOT_FOUND.\n\n"
                     "OUTPUT FORMAT:\n"
                     "ANSWER: <single short answer or concise summary in the user's language>"
-                )
+                ),
+                mime_type=mime_type,
             )
             if vision_result.get("status") == "success":
                 raw_desc = vision_result["data"]["description"].strip()

@@ -2,7 +2,7 @@ from ..state import ChatState
 from ..utils import extract_json
 from core.identity import AgentIdentity
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from langchain_ollama import OllamaLLM
 from config.settings import settings
 from utils.logger import get_logger
@@ -56,16 +56,18 @@ async def chat_generate_node(state: ChatState) -> ChatState:
         if memory and q_vec and not is_task_intent:
             cached = memory.get_cache(q_vec)
             if cached:
-                from ..model import SharedModelProvider
-                model_prov = SharedModelProvider.get_model()
+                # Use a BrainModel wrapper (BaseChatModel has no .think)
+                from ..model import BrainModel
+                critic_model = BrainModel(mode="critic")
                 msg_val = state.get("user_message", "")
                 from ..prompts.registry import get_prompt_registry
                 eval_prompt = get_prompt_registry().get("system.critic.cached_critic", msg_val=msg_val, cached=cached)
                 try:
-                    critic_eval = await model_prov.think(eval_prompt, phase="brief")
+                    critic_eval = await critic_model.think(eval_prompt, phase="brief")
                 except Exception as e:
                     logger.debug(f"[MEMORY CRITIC] Fallback due to error: {e}")
-                    critic_eval = "YES"
+                    # Cache safety: if critic fails, default to NO (fresh answer)
+                    critic_eval = "NO"
                 
                 if "YES" in critic_eval.upper():
                     logger.info(f"[MEMORY CRITIC] Evaluated Cache -> Hợp lệ. Sử dụng cache.")
@@ -155,7 +157,12 @@ async def chat_generate_node(state: ChatState) -> ChatState:
             all_thoughts.insert(0, f"Planner: {planning_thought}")
             
         thought = "\n".join([str(t) for t in all_thoughts])
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # Use configured local offset if provided (stable across hosts/containers)
+        offset = getattr(settings, "local_timezone_offset", None)
+        if offset is None:
+            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            current_time = (datetime.utcnow() + timedelta(hours=float(offset))).strftime("%Y-%m-%d %H:%M:%S")
 
         from memory.context import ConversationContextManager
         ctx_manager = ConversationContextManager(char_limit_per_message=8000, total_history_limit=50000)
@@ -218,6 +225,15 @@ async def chat_generate_node(state: ChatState) -> ChatState:
                     logger.error(f"[NEURAL_GENERATE] Error processing task output {i}: {e}")
             
             combined_results = "\n\n".join(raw_results_parts)
+
+            # --- KNOWLEDGE COMMIT (Tool-Aware Learning) ---
+            try:
+                memory_obj = state["context"].get("memory")
+                if memory_obj:
+                    from utils.knowledge_commit import commit_tool_knowledge
+                    await commit_tool_knowledge(memory_obj, msg, combined_results)
+            except Exception as kc_err:
+                logger.debug(f"[NEURAL_GENERATE] Knowledge commit skipped: {kc_err}")
             
             # --- ANTI-HALLUCINATION ENFORCEMENT ---
             if has_tool_errors:
@@ -335,7 +351,19 @@ async def chat_generate_node(state: ChatState) -> ChatState:
         peers_list = ", ".join([f"@{tag.lstrip('@')}" for name, tag in peer_bot_map.items()]) if peer_bot_map else "None"
         
         if prompt_mode == "fast_track":
-            prompt = p_registry.get("persona.generator.fast_track", msg=msg_for_prompt, history_str=history_str, peers=peers_list, bot_name=bot_name, mood=state.get('mood', 'OPTIMISTIC'), energy=f"{state.get('energy_level', 1.0)*100:.0f}%", language=lang_val)
+            prompt = p_registry.get(
+                "persona.generator.fast_track",
+                current_time=current_time,
+                msg=msg_for_prompt,
+                history_str=history_str,
+                peers=peers_list,
+                user_pronoun=user_pronoun,
+                bot_pronoun=bot_pronoun,
+                bot_name=bot_name,
+                mood=state.get('mood', 'OPTIMISTIC'),
+                energy=f"{state.get('energy_level', 1.0)*100:.0f}%",
+                language=lang_val
+            )
         elif prompt_mode == "pure_chat":
             prompt = p_registry.get("persona.generator.pure_chat", current_time=current_time, logic=logic, history_str=history_str, msg=msg_for_prompt, peers=peers_list, associative_context=associative_context, user_pronoun=user_pronoun, bot_name=bot_name, mood=state.get('mood', 'OPTIMISTIC'), energy=f"{state.get('energy_level', 1.0)*100:.0f}%", language=lang_val)
         else:
