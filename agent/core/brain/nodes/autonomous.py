@@ -16,9 +16,14 @@ logger = get_logger()
 from ..model import SharedModelProvider
 
 class ReasonerModel:
-    def __init__(self):
-        self.model = SharedModelProvider.get_model()
-        self.identity = AgentIdentity()
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance.model = SharedModelProvider.get_model()
+            cls._instance.identity = AgentIdentity()
+        return cls._instance
 
     async def think(self, prompt: str, phase: str = "brief", mood: str = "OPTIMISTIC", energy: float = 1.0) -> str:
         import textwrap, asyncio
@@ -218,7 +223,14 @@ async def decide_node(state: AgentState) -> AgentState:
 
         # CHECK FOR PENDING GOALS (Exploration)
         is_meditation = state["context"].get("is_meditation", False)
-        should_explore = is_meditation # If it's a meditation cycle, we SHOULD explore/evolve
+
+        # Drives: internal motivation vector guiding free-roam behavior.
+        drives = state.get("drives") or {}
+        curiosity = float(drives.get("curiosity", 0.0))
+        connection = float(drives.get("connection", 0.0))
+
+        # Decide whether to explore based on meditation flag and curiosity.
+        should_explore = is_meditation or curiosity > 0.6
         
         if should_explore:
             # Use LLM to plan the exploration
@@ -269,90 +281,23 @@ async def decide_node(state: AgentState) -> AgentState:
                 logger.warning(f"Exploration planning failed: {e}")
                 import traceback
                 logger.debug(traceback.format_exc())
-                # Fallback to simple search
-                state["decision"] = {
-                    "action": "web_search",
-                    "target_id": "SELF",
-                    "reason": "Fallback exploration",
-                    "confidence": 100,
-                    "params": {"query": "AI Agent Best Practices"}
-                }
-                return state
+                # Fallback to simple search only if curiosity is high enough.
+                if curiosity > 0.4:
+                    state["decision"] = {
+                        "action": "web_search",
+                        "target_id": "SELF",
+                        "reason": "Fallback exploration (driven by curiosity)",
+                        "confidence": 100,
+                        "params": {"query": "AI Agent Best Practices"}
+                    }
+                    return state
 
         state["decision"] = {"action": "IGNORE", "reason": "No target to act on"}
         state["phase"] = "decide_complete"
         return state
     
-    # Decision logic based on Professional Rules
-    severity = target.get("severity", "low")
-    score = target.get("score", 0)
-    user_risk = state["context"].get("risk_scores", {}).get(target["id"], 0.0)
-    
-    combined_score = (score * 0.7) + (user_risk * 0.3)
-    
-    # RULE 2 & 4: System Integrity & Proactive Guardian (Priority)
-    if target.get("type") == "SERVICE" and severity == "high":
-        from ..prompts.registry import get_prompt_registry
-        reason = get_prompt_registry().get("system_alerts.alerts.service_outage", service_id=target['id'])
-        decision = {
-            "action": "comm_alert",
-            "target_id": "ADMIN",
-            "target_type": "SYSTEM",
-            "reason": reason,
-            "confidence": 100
-        }
-        state["decision"] = decision
-        state["thoughts"].append(f"CRITICAL: Service health issue detected for {target['id']}")
-        logger.warning(f"EMERGENCY ALERT TRIGGERED FOR SERVICE: {target['id']}")
-        state["phase"] = "decide_complete"
-        return state
-
-    # Professional Logic: Avoid redundant or automatic broadcasts for routine events
-    # Only broadcast for severe security threats (Real attacks, not rate limits)
-    if target.get("trigger") == "AI_ALERT" and combined_score > 0.95:
-        from ..prompts.registry import get_prompt_registry
-        reason = get_prompt_registry().get("system_alerts.alerts.user_suspect", user_id=target['id'], reason=target['reason'])
-        decision = {
-            "action": "comm_alert",
-            "target_id": "ADMIN",
-            "target_type": "SYSTEM",
-            "reason": reason,
-            "confidence": int(combined_score * 100)
-        }
-        state["decision"] = decision
-        state["thoughts"].append(f"High-threat detection for {target['id']}. System alert triggered.")
-    
-    elif combined_score > 0.85 and severity == "high":
-        # Professional alert for confirmed threats
-        decision = {
-            "action": "comm_alert",
-            "target_id": target["id"],
-            "target_type": target["type"],
-            "reason": f"[PROFESSIONAL_RULE] {target['reason']}",
-            "confidence": int(combined_score * 100)
-        }
-        if memory: await memory.update_user_risk_score(target["id"], 0.4)
-    
-    elif combined_score > 0.7:
-        # Change FLAG to ALERT for significant anomalies
-        from ..prompts.registry import get_prompt_registry
-        reason = get_prompt_registry().get("system_alerts.alerts.generic_anomaly", target_id=target['id'], score=combined_score, reason=target['reason'])
-        decision = {
-            "action": "comm_alert",
-            "target_id": target["id"],
-            "target_type": target["type"],
-            "reason": reason,
-            "confidence": int(combined_score * 100)
-        }
-        if memory: await memory.update_user_risk_score(target["id"], 0.2)
-    else:
-        # Rule 5: Professional Conduct (Minimalist action)
-        decision = {
-            "action": "IGNORE",
-            "target_id": target["id"],
-            "reason": "Below action threshold or routine activity"
-        }
-        if memory: await memory.update_user_risk_score(target["id"], -0.05)
+    # Delegate threat scoring to helper function
+    decision = await _compute_threat_decision(target, state["context"], memory)
     
     state["decision"] = decision
     state["thoughts"].append(f"Decision: {decision['action']} (Conf: {decision.get('confidence', 0)}%)")
@@ -360,6 +305,47 @@ async def decide_node(state: AgentState) -> AgentState:
     
     state["phase"] = "decide_complete"
     return state
+
+async def _compute_threat_decision(target: dict, context: dict, memory) -> dict:
+    """
+    Pure decision logic extracted from decide_node.
+    Computes what action to take based on threat severity and scoring.
+    """
+    from ..prompts.registry import get_prompt_registry
+    p_reg = get_prompt_registry()
+    
+    severity = target.get("severity", "low")
+    score = target.get("score", 0)
+    user_risk = context.get("risk_scores", {}).get(target["id"], 0.0)
+    combined_score = (score * 0.7) + (user_risk * 0.3)
+    
+    # PRIORITY: Service outage → immediate alert
+    if target.get("type") == "SERVICE" and severity == "high":
+        reason = p_reg.get("system_alerts.alerts.service_outage", service_id=target['id'])
+        logger.warning(f"EMERGENCY ALERT TRIGGERED FOR SERVICE: {target['id']}")
+        return {"action": "comm_alert", "target_id": "ADMIN", "target_type": "SYSTEM", "reason": reason, "confidence": 100}
+    
+    # HIGH THREAT: AI-identified suspect with very high score
+    if target.get("trigger") == "AI_ALERT" and combined_score > 0.95:
+        reason = p_reg.get("system_alerts.alerts.user_suspect", user_id=target['id'], reason=target['reason'])
+        return {"action": "comm_alert", "target_id": "ADMIN", "target_type": "SYSTEM", "reason": reason, "confidence": int(combined_score * 100)}
+    
+    # CONFIRMED THREAT: High severity + high score
+    if combined_score > 0.85 and severity == "high":
+        if memory: await memory.update_user_risk_score(target["id"], 0.4)
+        return {"action": "comm_alert", "target_id": target["id"], "target_type": target["type"],
+                "reason": f"[PROFESSIONAL_RULE] {target['reason']}", "confidence": int(combined_score * 100)}
+    
+    # MODERATE ANOMALY: Significant but not critical
+    if combined_score > 0.7:
+        reason = p_reg.get("system_alerts.alerts.generic_anomaly", target_id=target['id'], score=combined_score, reason=target['reason'])
+        if memory: await memory.update_user_risk_score(target["id"], 0.2)
+        return {"action": "comm_alert", "target_id": target["id"], "target_type": target["type"],
+                "reason": reason, "confidence": int(combined_score * 100)}
+    
+    # BELOW THRESHOLD: Ignore and slightly decay risk
+    if memory: await memory.update_user_risk_score(target["id"], -0.05)
+    return {"action": "IGNORE", "target_id": target["id"], "reason": "Below action threshold or routine activity"}
 
 
 async def act_node(state: AgentState) -> AgentState:
@@ -406,7 +392,7 @@ async def act_node(state: AgentState) -> AgentState:
                 await memory.remember(
                     key=f"learning:{datetime.utcnow().timestamp()}",
                     value=f"Explored {target_id}: {data_preview}...",
-                    category=MemoryCategory.LEARNING,
+                    category=MemoryCategory.EXPERIENCE,
                     importance=0.5
                 )
 
@@ -435,8 +421,8 @@ async def reflect_node(state: AgentState) -> AgentState:
     action_result = state.get("action_result", {})
     success = action_result.get("success", False)
     
-    # --- MOOD EVOLUTION ---
-    identity = AgentIdentity()
+    # --- MOOD EVOLUTION (reuse cached identity if available) ---
+    identity = state.get("context", {}).get("identity") or AgentIdentity()
     identity.current_mood = state.get("mood", "OPTIMISTIC")
     identity.energy = state.get("energy_level", 1.0)
     
@@ -446,9 +432,41 @@ async def reflect_node(state: AgentState) -> AgentState:
     
     identity.evolve_mood(stimulus, "success" if success else "failure")
     
-    # Update state with new mood
+    # Update state with new mood and energy
     state["mood"] = identity.current_mood
     state["energy_level"] = identity.energy
+
+    # --- DRIVE EVOLUTION ---
+    # Adjust internal motivational drives based on recent outcome.
+    drives = state.get("drives") or {}
+
+    def _clamp(value: float) -> float:
+        return max(0.0, min(1.0, value))
+
+    safety = float(drives.get("safety", 0.9))
+    curiosity = float(drives.get("curiosity", 0.4))
+    connection = float(drives.get("connection", 0.3))
+    mastery = float(drives.get("mastery", 0.6))
+
+    # If something went wrong, safety concern increases, curiosity dips slightly.
+    if not success:
+        safety = _clamp(safety + 0.05)
+        curiosity = _clamp(curiosity - 0.02)
+    else:
+        # When cycles succeed, the agent gains mastery and slowly relaxes safety tension.
+        mastery = _clamp(mastery + 0.03)
+        safety = _clamp(safety - 0.01)
+
+    # If there were no anomalies and no social impulse, connection need slowly rises.
+    if not state.get("anomalies"):
+        connection = _clamp(connection + 0.01)
+
+    state["drives"] = {
+        "safety": safety,
+        "curiosity": curiosity,
+        "connection": connection,
+        "mastery": mastery,
+    }
     # ----------------------
 
     reflection = (
@@ -533,6 +551,15 @@ async def _maybe_generate_social_impulse(state: AgentState, identity: AgentIdent
         
         bot_name = getattr(settings, 'bot_name', 'Agent')
         current_time = datetime.now().strftime("%H:%M %A")
+
+        # Determine target language for the social impulse.
+        # Autonomous cycles do not always have a ProcessedInput attached,
+        # so we rely on static configuration as a proxy.
+        lang_cfg = getattr(settings, "user_language", "vi")
+        lang_code = str(lang_cfg or "vi").lower()
+        if lang_code == "mixed":
+            lang_code = "vi"
+        language = "Vietnamese" if lang_code == "vi" else "English"
         
         # Gather what's on the brain's mind (pruned for privacy/naturalness)
         recent_activity = state.get("thoughts", [])[-2:] if state.get("thoughts") else ["Quiet cycle"]
@@ -547,7 +574,8 @@ async def _maybe_generate_social_impulse(state: AgentState, identity: AgentIdent
             peer=peer,
             mood=mood,
             current_time=current_time,
-            recent_activity=recent_activity
+            recent_activity=recent_activity,
+            language=language,
         )
 
         model = BrainModel(mode="social")

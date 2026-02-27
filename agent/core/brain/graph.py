@@ -125,6 +125,13 @@ class Brain:
             "cycle_complete": False,
             "mood": "OPTIMISTIC",
             "energy_level": 1.0,
+            # Baseline motivational profile; values will be evolved in reflect_node.
+            "drives": {
+                "safety": 0.9,
+                "curiosity": 0.4,
+                "connection": 0.3,
+                "mastery": 0.6,
+            },
             "goals": [],
             "error": None
         }
@@ -396,7 +403,9 @@ class Brain:
                             event_type="ACT_PROGRESS", 
                             event_detail=f"Đang thực hiện bước {state.get('current_step', 0) + 1}/{len(state.get('plan', []))}"
                         )
-                        await channel.send(status_msg, recipient=chat_id, reply_to=state.get("reply_to"))
+                        # Progress updates should feel like ambient status,
+                        # not strict replies to the original user message.
+                        await channel.send(status_msg, recipient=chat_id)
                     # 2. Skip synthesis update to reduce noise
                     elif node_name == "generate":
                         pass

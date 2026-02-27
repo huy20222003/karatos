@@ -6,6 +6,7 @@ from config.settings import settings
 from channels.telegram.channel import TelegramChannel
 from channels.telegram.handler import TelegramCommandHandler
 from utils.logger import get_logger
+from typing import Optional
 
 logger = get_logger()
 
@@ -56,7 +57,15 @@ class TelegramConnector:
 
             response = await self.handler.handle(message)
             if response:
-                await self.telegram.send(response, recipient=message.chat_id)
+                # Allow the brain to control threading: if the response payload
+                # specifies an explicit reply_to, honor it. Otherwise send as a
+                # fresh message without forcing reply threading.
+                reply_id = None
+                payload = response
+                if isinstance(response, dict):
+                    reply_id = response.get("reply_to")
+                    payload = {k: v for k, v in response.items() if k != "reply_to"}
+                await self.telegram.send(payload, recipient=message.chat_id, reply_to=reply_id)
                 
                 # --- A2A Mailbox Drop Logic (Outgoing Failsafe) ---
                 text_content = ""
@@ -69,9 +78,9 @@ class TelegramConnector:
                     mentions = set(re.findall(r'@\w+', text_content))
                     registrations = {}
                     try:
-                        from skills.mcp_realm import get_mcp_realm
-                        realm = get_mcp_realm()
-                        reg_response = await realm.execute("mailbox:get_registrations", {})
+                        from tools.mcp_bridge import get_mcp_bridge
+                        bridge = get_mcp_bridge()
+                        reg_response = await bridge.execute("mailbox:get_registrations", {})
                         if reg_response.get("status") == "success":
                             reg_box = reg_response.get("result", {})
                             if isinstance(reg_box, dict) and "value" in reg_box:
@@ -92,14 +101,14 @@ class TelegramConnector:
                         bot_username = getattr(self.telegram, 'username', None) or getattr(settings, 'bot_username', 'SystemBot')
                         my_username = f"@{bot_username}" if not str(bot_username).startswith('@') else bot_username
                         
-                        from skills.mcp_realm import get_mcp_realm
-                        realm = get_mcp_realm()
+                        from tools.mcp_bridge import get_mcp_bridge
+                        bridge = get_mcp_bridge()
                         
                         for m in mentions:
                             if m.lower() != my_username.lower():
                                 logger.info(f"[A2A_BUS] 📤 Dropping response into mailbox for {m}")
                                 try:
-                                    drop_res = await realm.execute("mailbox:drop_message", {
+                                    drop_res = await bridge.execute("mailbox:drop_message", {
                                         "sender": my_username,
                                         "target": m,
                                         "chat_id": str(message.chat_id),
@@ -189,9 +198,9 @@ class TelegramConnector:
         
         # Use MCP Mailbox for inter-agent communication
         try:
-            from skills.mcp_realm import get_mcp_realm
-            realm = get_mcp_realm()
-            response = await realm.execute("mailbox:check_mailbox", {"my_username": my_username})
+            from tools.mcp_bridge import get_mcp_bridge
+            bridge = get_mcp_bridge()
+            response = await bridge.execute("mailbox:check_mailbox", {"my_username": my_username})
             
             messages = []
             if isinstance(response, dict):
@@ -265,9 +274,9 @@ class TelegramConnector:
                         resp_text = response.get("text") or response.get("caption") or ""
                     
                     if sender.lower() in resp_text.lower():
-                        from skills.mcp_realm import get_mcp_realm
-                        realm = get_mcp_realm()
-                        await realm.execute("mailbox:drop_message", {
+                        from tools.mcp_bridge import get_mcp_bridge
+                        bridge = get_mcp_bridge()
+                        await bridge.execute("mailbox:drop_message", {
                             "sender": my_username,
                             "target": sender,
                             "chat_id": str(chat_id),
@@ -301,9 +310,9 @@ class TelegramConnector:
             bot_display_name = settings.bot_name or getattr(self.telegram, 'name', None)
             
             if bot_username:
-                from skills.mcp_realm import get_mcp_realm
-                realm = get_mcp_realm()
-                await realm.execute("mailbox:register_bot", {
+                from tools.mcp_bridge import get_mcp_bridge
+                bridge = get_mcp_bridge()
+                await bridge.execute("mailbox:register_bot", {
                     "name": bot_display_name,
                     "username": f"@{bot_username}" if not str(bot_username).startswith('@') else bot_username
                 })

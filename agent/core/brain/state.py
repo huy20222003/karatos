@@ -33,6 +33,9 @@ class AgentState(TypedDict):
     # Brain 3.0: Dynamic Persona
     mood: str
     energy_level: float
+    # Internal motivational drives (0.0 – 1.0) that influence autonomous behavior.
+    # Example keys: "safety", "curiosity", "connection", "mastery".
+    drives: dict
     
     goals: list[dict] # Autonomously proposed goals/tasks
     error: Optional[str] # Error message if something failed
@@ -60,6 +63,7 @@ class ChatState(TypedDict):
     is_fast_track: bool            # Brain 2.0: Reflex Mode flag
     confidence: float              # Phase 21.1: Brain's current confidence in the interaction
     processed: Optional[Any]       # Metadata from InputPipeline
+    reply_to: Optional[str]        # Original message ID to reply to
 
 
     # Brain 3.0: Dynamic Persona
@@ -76,4 +80,7 @@ class ChatState(TypedDict):
     
     # Phase 19.1: High-Performance Parallel Speculation
     speculative_data_context: Optional[dict]
+    
+    # Phase 30: Capability Scanner — selected skills/tools for planning
+    selected_capabilities: Optional[dict]  # {"skills": [...], "tools": [...], "reasoning": "..."}
 

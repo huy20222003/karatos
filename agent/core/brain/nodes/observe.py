@@ -55,7 +55,7 @@ async def chat_observe_node(state: ChatState) -> ChatState:
     t_start_obs = time.time()
     chat_id = state["chat_id"]
     msg = state["user_message"]
-    
+
     logger.info(f"[CHAT_OBSERVE] Loading history for {chat_id}")
     
     memory = state["context"].get("memory")
@@ -64,6 +64,61 @@ async def chat_observe_node(state: ChatState) -> ChatState:
     # 0. Short-Term Memory Update (Add new observation)
     if short_memory:
         short_memory.add_observation(msg)
+
+    # --- PHASE: IMAGE COMPREHENSION ---
+    # If user sent an image (either as file or in-memory base64), extract content
+    file_path = state.get("context", {}).get("file_path", "")
+    image_base64 = state.get("context", {}).get("image_base64", "")
+    mime_type = state.get("context", {}).get("mime_type", "")
+    
+    image_extensions = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff")
+    is_image = (
+        mime_type.startswith("image/") if mime_type else
+        file_path.lower().endswith(image_extensions) if file_path else 
+        bool(image_base64)
+    )
+    
+    if is_image and (file_path or image_base64):
+        try:
+            from tools.vision_reader import VisionReader
+            logger.info(f"[CHAT_OBSERVE] 🖼️ Image detected (In-memory: {bool(image_base64)}). Extracting content...")
+            vision_result = await VisionReader.analyze(
+                image_path=file_path,
+                image_base64=image_base64,
+                mode="analyze",
+                prompt=(
+                    "You are a vision question-answering engine.\n"
+                    f"USER QUESTION: \"{msg}\"\n\n"
+                    "TASK:\n"
+                    "- Answer the user's question using ONLY the information inside the image.\n"
+                    "- If the question asks to summarize or explain a post/article shown in the screenshot, focus on the main article/post body and ignore browser chrome, menus, sidebars, or generic UI.\n"
+                    "- If the question asks for a specific field (e.g., price, name, title, rating), return that value exactly as shown.\n"
+                    "- If the answer is clearly present, quote it exactly in the original language (do NOT translate).\n"
+                    "- If the answer is not present in the image, return the phrase: ANSWER_NOT_FOUND.\n\n"
+                    "OUTPUT FORMAT:\n"
+                    "ANSWER: <single short answer or concise summary in the user's language>"
+                )
+            )
+            if vision_result.get("status") == "success":
+                raw_desc = vision_result["data"]["description"].strip()
+                extracted = raw_desc
+                upper = raw_desc.upper()
+                marker = "ANSWER:"
+                if "ANSWER:" in upper:
+                    idx = upper.find(marker)
+                    extracted = raw_desc[idx + len(marker):].strip()
+                # Keep both the direct answer and the underlying vision text for transparency
+                state["user_message"] = f"{msg}\n\n[IMAGE_ANSWER]: {extracted}"
+                state["context"]["vision_answer"] = extracted
+                state["context"]["vision_raw"] = raw_desc
+                msg = state["user_message"]
+                logger.info(f"[CHAT_OBSERVE] ✅ Vision QA complete ({len(extracted)} chars answer)")
+            else:
+                logger.warning(f"[CHAT_OBSERVE] Vision extraction failed: {vision_result.get('message')}")
+                state["context"]["vision_extracted"] = None
+        except Exception as e:
+            logger.error(f"[CHAT_OBSERVE] VisionReader error: {e}")
+    # --- END IMAGE COMPREHENSION ---
 
     if memory:
         # Use ConversationContextManager for optimized history
