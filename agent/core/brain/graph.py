@@ -10,14 +10,14 @@ from langchain_ollama import OllamaLLM
 # Imports from modular brain
 from .state import AgentState, ChatState
 from .utils import route_chat, should_continue_execution, should_investigate, should_continue
+from utils.file_handler import cleanup_temp_file
 from channels.telegram.channel import get_telegram_channel
 from .nodes.observe import chat_observe_node, observe_node
 from .nodes.router import chat_route_node
 from .nodes.plan import chat_plan_node, chat_prepare_step_node
 from .nodes.act import chat_act_node, chat_collect_result_node
 from .nodes.generate import chat_generate_node
-from .nodes.reflect import chat_reflect_node
-from .nodes.self_correction import chat_self_correction_node
+from .nodes.post_generate import chat_post_generate_node
 from .nodes.autonomous import reason_node, investigate_node, decide_node, act_node, reflect_node as auto_reflect_node
 from .nodes.critic import critic_node
 from .nodes.goal_proposer import propose_goals_node
@@ -77,7 +77,6 @@ class Brain:
         self.graph.add_node("reason", reason_node)
         self.graph.add_node("investigate", investigate_node)
         self.graph.add_node("decide", decide_node)
-        # self.graph.add_node("evolve", evolve_node) # Removed autonomous self-evolution
         self.graph.add_node("critic", critic_node)
         self.graph.add_node("act", act_node)
         self.graph.add_node("reflect", auto_reflect_node)
@@ -154,7 +153,7 @@ class Brain:
         """Compile the chat reasoning graph"""
         graph = StateGraph(ChatState)
         
-        # Add Nodes
+        # Add Nodes (Phase 2: scanner merged into planner — removed as separate node)
         graph.add_node("parallel_startup", chat_parallel_startup_node)
         graph.add_node("route", chat_route_node)
         graph.add_node("plan", chat_plan_node)
@@ -162,20 +161,19 @@ class Brain:
         graph.add_node("act", chat_act_node)
         graph.add_node("collect", chat_collect_result_node)
         graph.add_node("generate", chat_generate_node)
-        graph.add_node("self_correction", chat_self_correction_node)
-        graph.add_node("reflect", chat_reflect_node)
+        graph.add_node("post_generate", chat_post_generate_node) 
         graph.add_node("critic", critic_node) # Safety Guard
         
         # Define Edges
         graph.set_entry_point("parallel_startup")
         graph.add_edge("parallel_startup", "route")
         
-        # Routing Logic
+        # Routing Logic — plan goes directly to planner (scanner merged in)
         graph.add_conditional_edges(
             "route",
             route_chat,
             {
-                "plan": "plan",
+                "plan": "plan",                         # Direct to planner (no scanner)
                 "generate": "generate",
                 "prepare_step": "prepare_step",
                 "__end__": END
@@ -202,12 +200,12 @@ class Brain:
             }
         )
         
-        graph.add_edge("generate", "self_correction")
-        graph.add_edge("self_correction", "reflect")
-        graph.add_edge("reflect", END)
+        # Post-generation: combined self-correction + reflection (Phase 3)
+        graph.add_edge("generate", "post_generate")
+        graph.add_edge("post_generate", END)
         
         self.compiled_chat_graph = graph.compile()
-        logger.debug("Modular Chat Graph compiled successfully")
+        logger.debug("Optimized Chat Graph compiled successfully")
 
     async def chat(self, user_message: str, chat_id: str, context: dict = None) -> dict:
         """Main entry point for chat interaction"""
@@ -240,6 +238,7 @@ class Brain:
             "cycle_complete": False,
             "is_fast_track": False,
             "processed": context.get("processed"), # Preserved metadata
+            "reply_to": context.get("reply_to"),   # Phase 32: Original Message ID
             "confidence": 0.0,
             "mood": "OPTIMISTIC",
 
@@ -284,7 +283,7 @@ class Brain:
                                 event_type="PLAN_ACK", 
                                 event_detail="Đã nhận lệnh và đang triển khai!"
                             )
-                            await channel.send(status_msg, recipient=chat_id)
+                            await channel.send(status_msg, recipient=chat_id, reply_to=final_state.get("reply_to"))
                         
                         # Launch background monitor for the REST of the graph (Reset Fast-Track for full synthesis)
                         logger.info(f"[BRAIN] Resetting is_fast_track=False for background synthesis on {chat_id}")
@@ -324,8 +323,21 @@ class Brain:
             
             bot_name = getattr(settings, 'bot_name', 'Brain')
             total_steps = len(state.get("plan", []))
-            current_step = state.get("current_step", 0)
+            current_step = state.get("current_step", 0) + 1
             
+            # Determine target language
+            processed = state.get("processed")
+            # Default to Vietnamese for our primary user base.
+            lang_val = "Vietnamese"
+            if processed:
+                code = getattr(processed, "language", "vi")
+                # Treat "mixed" like Vietnamese so the LLM answers thuần Việt,
+                # even if the user dùng lẫn vài từ tiếng Anh.
+                if code in ("vi", "mixed"):
+                    lang_val = "Vietnamese"
+                else:
+                    lang_val = "English"
+
             prompt = p_registry.get(
                 "persona.generator.status_notification",
                 bot_name=bot_name,
@@ -334,7 +346,8 @@ class Brain:
                 event_type=event_type,
                 event_detail=event_detail,
                 total_steps=total_steps,
-                current_step=current_step
+                current_step=current_step,
+                language=lang_val
             )
             
             response = await model.think(prompt, phase="status_check")
@@ -376,19 +389,24 @@ class Brain:
                 for node_name, state_update in event.items():
                     state.update(state_update)
                     
-                    # 1. Skip individual task updates to reduce noise as requested by Administrator
+                    # 1. Restore status update for 'act' node to provide visibility
                     if node_name == "act":
-                        pass 
-                    
+                        status_msg = await self._generate_status_update(
+                            state, 
+                            event_type="ACT_PROGRESS", 
+                            event_detail=f"Đang thực hiện bước {state.get('current_step', 0) + 1}/{len(state.get('plan', []))}"
+                        )
+                        await channel.send(status_msg, recipient=chat_id, reply_to=state.get("reply_to"))
                     # 2. Skip synthesis update to reduce noise
                     elif node_name == "generate":
                         pass
 
-            # 3. Final Response (Generated by normal generate node)
             response = state.get("response")
+            reply_to = state.get("reply_to")
             if response:
-                await channel.send(response, recipient=chat_id)
-                logger.info(f"[MONITOR] Plan execution complete for {chat_id} via {channel_name}")
+                logger.info(f"[MONITOR] Delivering final response to {chat_id} via {channel_name} (Reply to: {reply_to})")
+                await channel.send(response, recipient=chat_id, reply_to=reply_to)
+                logger.info(f"[MONITOR] Plan execution complete for {chat_id}")
                 
                 # --- NGO FIX: A2A Mailbox dropping for Background Tasks ---
                 try:
@@ -406,12 +424,12 @@ class Brain:
                             my_username = getattr(settings, 'bot_username', 'SystemBot')
                             my_username = f"@{my_username}" if not my_username.startswith('@') else my_username
                             
-                            from skills.mcp_realm import get_mcp_realm
-                            realm = get_mcp_realm()
+                            from tools.mcp_bridge import get_mcp_bridge
+                            bridge = get_mcp_bridge()
                             
                             for m in mentions:
                                 if m.lower() != my_username.lower():
-                                    await realm.execute("mailbox:drop_message", {
+                                    await bridge.execute("mailbox:drop_message", {
                                         "sender": my_username,
                                         "target": m,
                                         "chat_id": str(chat_id),
@@ -422,13 +440,17 @@ class Brain:
         except Exception as e:
             logger.error(f"[MONITOR] Background execution failed: {e}")
             await channel.send(f"❌ Niva encountered an issue during execution: {str(e)}", recipient=chat_id)
+        finally:
+            # NGO: Cleanup temp files after background task completion
+            file_path = state.get("context", {}).get("file_path")
+            cleanup_temp_file(file_path, source="MONITOR")
 
     async def shutdown(self):
         """Shutdown brain resources (MCP sessions, etc.)"""
         logger.info("[BRAIN] Shutting down brain resources...")
         try:
-            from skills.mcp_realm import get_mcp_realm
-            mcp = get_mcp_realm()
+            from tools.mcp_bridge import get_mcp_bridge
+            mcp = get_mcp_bridge()
             await mcp.shutdown()
             logger.info("[BRAIN] MCP sessions closed.")
         except Exception as e:
@@ -436,31 +458,71 @@ class Brain:
 
 async def chat_parallel_startup_node(state: ChatState) -> ChatState:
     """
-    ALGORITHMIC PARALLEL STARTUP:
-    Run Observation, Speculative Recall, and Data Speculation in concurrent threads.
+    PARALLEL STARTUP (Optimized):
+    Run Observation, Data Speculation, and I/O Prefetch in concurrent threads.
+    
+    Centralizes expensive I/O that was previously duplicated in router/plan/generate:
+    - Peer bot registrations (was: 3 calls → now: 1)
+    - Identity loading (was: 3 loads → now: 1)
+    - deep_recall is handled by observe.py (was: also here, removed duplicate)
     """
     import time
-    # 1. Observation Task (DB logs)
+
+    # 1. Observation Task (loads history, does deep_recall, handles vision)
     obs_task = chat_observe_node(state)
     
-    # 2. Speculative Recall Task (Semantic Search)
-    async def speculative_recall(st: ChatState):
-        if st.get("query_vector") and st.get("context", {}).get("memory"):
-            memory = st["context"]["memory"]
-            memories = await memory.deep_recall(st["user_message"], query_vector=st["query_vector"], limit=8)
-            return {"speculative_memories": memories}
-        return {}
-
-    recall_task = speculative_recall(state)
-    
-    # 3. Data Speculation Task (Pre-fetch Schema)
+    # 2. Data Speculation Task (Pre-fetch DB Schema if DB keywords detected)
     from .nodes.speculator import data_speculator_node
     spec_task = data_speculator_node(state)
     
-    # Execute in parallel
-    results = await asyncio.gather(obs_task, recall_task, spec_task)
+    # 3. I/O Prefetch Task (peer bots + identity — previously duplicated 3x each)
+    async def prefetch_shared_io(st: ChatState):
+        result = {}
+        
+        # Fetch peer bot registrations (was duplicated in router, plan, generate)
+        try:
+            from tools.mcp_bridge import get_mcp_bridge
+            mcp = get_mcp_bridge()
+            peer_bot_map = await mcp.get_bot_registrations()
+            result["_cached_peer_bot_map"] = peer_bot_map or {}
+        except Exception as e:
+            logger.debug(f"[PREFETCH] Peer bot fetch failed: {e}")
+            result["_cached_peer_bot_map"] = {}
+        
+        # Load identity from memory (was duplicated in router, generate)
+        try:
+            from core.identity import AgentIdentity
+            identity = AgentIdentity()
+            memory = st.get("context", {}).get("memory")
+            chat_id = st.get("chat_id")
+            if memory and chat_id:
+                await identity.load_from_memory(memory, chat_id)
+            result["_cached_identity"] = identity
+        except Exception as e:
+            logger.debug(f"[PREFETCH] Identity load failed: {e}")
+            result["_cached_identity"] = None
+        
+        return result
+
+    prefetch_task = prefetch_shared_io(state)
+    
+    # Execute all 3 in parallel
+    results = await asyncio.gather(obs_task, spec_task, prefetch_task)
+    
+    # Merge results into state
     for res_state in results:
-        state.update(res_state)
+        if isinstance(res_state, dict):
+            # For prefetch results, store in context to avoid polluting top-level state
+            if "_cached_peer_bot_map" in res_state or "_cached_identity" in res_state:
+                ctx = state.get("context", {})
+                if "_cached_peer_bot_map" in res_state:
+                    ctx["peer_bot_map"] = res_state.pop("_cached_peer_bot_map")
+                if "_cached_identity" in res_state:
+                    ctx["identity"] = res_state.pop("_cached_identity")
+                state["context"] = ctx
+            else:
+                state.update(res_state)
         
     return state
+
 

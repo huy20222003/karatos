@@ -1,4 +1,5 @@
 import asyncio
+import os
 import re
 from typing import Optional, List, Any
 from datetime import datetime
@@ -8,6 +9,7 @@ from utils.security import SecurityShield
 from core.awareness import SpatialAwareness
 from core.input_pipeline import InputPipeline
 from ..base import Message, MessageType
+from utils.file_handler import prepare_telegram_file, cleanup_temp_file
 
 logger = get_logger()
 
@@ -83,14 +85,15 @@ class TelegramCommandHandler:
             chat_id=str(message.chat_id)
         )
         
-        # Use sanitized content
+        # Use sanitized content and attach language for downstream use
         message.content = processed.clean_text
+        message.language = processed.language
         
         # Security: Block strictly dangerous inputs
         if not processed.is_safe:
             logger.warning(f"[SECURITY] High Risk Input detected: {processed.risk_flags}")
             if processed.risk_score >= 0.6:
-                return "🚫 Security Shield: Malicious pattern detected in your message. Action blocked."
+                return await self._generate_brain_feedback("Security Shield: Malicious pattern detected in your message. This action has been blocked for safety.", message)
 
         # OWNER-ONLY RESTRICTION (Relaxed for bots in group)
         is_sender_bot = message.metadata.get("is_bot", False)
@@ -138,6 +141,7 @@ class TelegramCommandHandler:
                 response = await self._generate_brain_feedback(f"Error executing command: {e}", message)
         else:
             # Fallback to chat if not a command (pass processed metadata)
+            # NGO: Ensure message.content is passed as STING, processed as OBJECT in context
             response = await self._cmd_chat(message.content, message, processed=processed)
             
         # 2. SECURITY SHIELD: DLP (Data Leakage Prevention)
@@ -180,21 +184,24 @@ class TelegramCommandHandler:
     async def handle_callback(self, message: Message) -> Optional[str]:
         """Handle button callback queries"""
         data = message.content
-        logger.info(f"[TELEGRAM] Callback received: {data}")
+        callback_id = message.metadata.get("callback_id")
+        
+        logger.info(f"[TELEGRAM] Callback received: {data} (ID: {callback_id})")
         
         # 1. Confirmation Actions (Confirmation logic from decision nodes)
         if data.startswith("confirm:"):
+            # Provide immediate feedback to clear loading state
+            if callback_id and hasattr(self.channel, 'answer_callback_query'):
+                await self.channel.answer_callback_query(callback_id)
             return await self._generate_brain_feedback(f"I received the response: {data.split(':')[1]}", message)
             
-        # 3. Decision confirmation logic (Future expansion)
-        # elif data.startswith("custom_action:"): ...
-
         # 4. Centralized Approval Actions (CLI, System, etc.)
         from utils.notification import NotificationManager
         approval_response = await NotificationManager.handle_approval_callback(
             data=data,
             channel=self.channel,
-            sender_id=message.sender_id
+            sender_id=message.sender_id,
+            callback_id=callback_id
         )
         
         if approval_response:
@@ -230,25 +237,64 @@ class TelegramCommandHandler:
                 await self.agent.memory.record_chat_message(chat_id, "user", text)
                 logger.debug(f"[TELEGRAM] Forwarding to agent: '{text[:50]}...'")
                 
-                # CRITICAL: Pass the FULL ProcessedInput object to preserve metadata
-                # Pass context to ensure channel is set to 'telegram'
-                response = await self.agent.chat(
-                    processed or text, 
-                    chat_id, 
-                    context={"channel": "telegram"}
-                )
+                # 📥 FILE & PHOTO HANDLING
+                context = {"channel": "telegram", "processed": processed, "reply_to": msg.id}
                 
-                # --- NGO FIX: Support silent background offloading ---
-                if response is None:
-                    logger.info(f"[TELEGRAM] Agent handling in background. Staying silent.")
-                    return None
+                doc_meta = msg.metadata.get("document")
+                photo_meta = msg.metadata.get("photo")
                 
-                if not response:
-                    logger.warning(f"[TELEGRAM] Response empty from agent.chat!")
-                    return await self._generate_brain_feedback("I'm a bit confused answering this, please bear with me.", msg)
-                
-                logger.info(f"[TELEGRAM] Final response ready. Type: {type(response)}, IsDict: {isinstance(response, dict)}")
-                return response
+                temp_file = None
+                try:
+                    # Case 1: Photo (In-memory)
+                    if photo_meta and photo_meta.get("file_id"):
+                        logger.info(f"[TELEGRAM] 🖼️ Processing photo (In-memory)...")
+                        img_bytes = await self.channel.get_file_bytes(photo_meta["file_id"])
+                        if img_bytes:
+                            import base64
+                            context["image_base64"] = base64.b64encode(img_bytes).decode("utf-8")
+                            context["mime_type"] = "image/jpeg"
+                            logger.info(f"[TELEGRAM] ✅ Photo loaded into RAM.")
+
+                    # Case 2: Document (Requires download, then cleanup)
+                    elif doc_meta and doc_meta.get("file_id"):
+                        file_info = await prepare_telegram_file(self.channel, doc_meta, "file", "")
+                        if file_info:
+                            context.update({
+                                "file_path": file_info["path"],
+                                "file_name": file_info["name"],
+                                "mime_type": file_info["mime"]
+                            })
+                            temp_file = file_info["path"]
+                            logger.info(f"[TELEGRAM] ✅ Document ready (will be auto-cleaned)")
+                            
+                    # Case 3: Voice/Audio (New)
+                    elif (msg.metadata.get("voice") or msg.metadata.get("audio")):
+                        audio_meta = msg.metadata.get("voice") or msg.metadata.get("audio")
+                        file_info = await prepare_telegram_file(self.channel, audio_meta, "voice_message.ogg", "audio/ogg")
+                        if file_info:
+                            context.update({
+                                "file_path": file_info["path"],
+                                "file_name": file_info["name"],
+                                "mime_type": file_info["mime"]
+                            })
+                            temp_file = file_info["path"]
+                            logger.info(f"[TELEGRAM] ✅ Audio ready")
+
+                    # Forward to Agent
+                    response = await self.agent.chat(text, chat_id, context=context)
+                    
+                    # NGO FIX: Support silent background offloading
+                    if response is None:
+                        # If offloaded, the cleanup must happen in the background monitor!
+                        # We hand over the temp_file to the state for the monitor to clean up.
+                        temp_file = None
+                        return None
+                    
+                    return response
+
+                finally:
+                    # Immediate cleanup for foreground tasks
+                    cleanup_temp_file(temp_file, source="TELEGRAM")
             finally:
                 typing_task.cancel()
         return await self._generate_brain_feedback("Niva has no reaction, I might be busy with something else.", msg)
@@ -259,8 +305,18 @@ class TelegramCommandHandler:
             return context_msg  # Fallback
             
         chat_id = str(msg.chat_id)
+        
+        # Determine target language from message metadata or heuristic
+        lang = getattr(msg, "language", "en")
+        # For Vietnamese users we prefer consistent Vietnamese replies.
+        # Treat "mixed" as Vietnamese, since most chats are VI with some EN terms.
+        if lang in ("vi", "mixed"):
+            language_instruction = "Vietnamese"
+        else:
+            language_instruction = "English"
+
         # Use a hidden prompt style that Niva understands as an internal update
-        instruction = f"[INTERNAL_SYSTEM_UPDATE] {context_msg}. Please respond to the User in your style (English only)."
+        instruction = f"[INTERNAL_SYSTEM_UPDATE] {context_msg}. Please respond to the User in your style. Required Response Language: {language_instruction}."
         
         try:
             response = await self.agent.chat(
@@ -500,11 +556,9 @@ class TelegramCommandHandler:
                 except:
                     pass
             
-            # Use Nested format (Sếp's preferred professional style)
             if "mcpServers" not in data and "mcp_servers" not in data:
                 data = {"mcpServers": {}}
             
-            # Prefer mcpServers if it exists, otherwise fallback to mcp_servers
             target_key = "mcpServers" if "mcpServers" in data else "mcp_servers"
             data[target_key][name] = mcp_config
                 

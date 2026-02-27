@@ -128,13 +128,12 @@ class VisualEnhancer:
         """
         Detect a long bullet or numbered list and convert to a table for rendering.
         """
-        # Improved regex to catch: "- item", "* item", "• item", "1. item", "1) item"
-        list_pattern = r"(?:^|\n)(?:[-*•]|\d+[.)])\s+(.*)"
+        # Improved regex to catch: "- item", "**1.** item", etc.
+        list_pattern = r"(?:^|\n)(?:\*\*)?(?:[-*•]|\d+[.)])(?:\*\*)?\s+(.*)"
         matches = re.findall(list_pattern, text)
         
         # Look for 5+ items
         if len(matches) >= 5:
-            logger.info(f"[VISUALIZER] Detected list with {len(matches)} items.")
             headers = ["Items"]
             rows = [[m.strip()] for m in matches]
             
@@ -146,8 +145,6 @@ class VisualEnhancer:
                 match_text = text[start:end]
                 return rows, headers, match_text
         
-        if len(matches) > 0:
-            logger.debug(f"[VISUALIZER] List detected but only {len(matches)} items (minimum 5 required).")
         return None
 
     @classmethod
@@ -158,7 +155,6 @@ class VisualEnhancer:
         Now async to support LLM-driven intelligent summarization.
         """
         if skip_visuals:
-            logger.debug("[VISUALIZER] Skip visuals flag detected. Bypassing enhancement.")
             return response_data if isinstance(response_data, dict) else {"text": str(response_data)}
 
         text = response_data if isinstance(response_data, str) else response_data.get("text", "")
@@ -179,51 +175,63 @@ class VisualEnhancer:
             if not result:
                 result = cls.detect_list(text)
                 title = "NivaSound Summary"
-            else:
-                if "shape:" in text:
-                    title = "NivaSound Data Analysis"
+            elif "shape:" in text: # This condition should be part of the table detection logic, not here.
+                                   # It's likely a remnant from a previous edit.
+                title = "NivaSound Data Analysis"
             
             if result:
                 rows, headers, match_text = result
-                logger.info(f"[VISUALIZER] Visual data detected ({len(rows)} rows, {len(headers)} cols). Rendering...")
-                image_bytes = render_table_to_image(rows, headers, title=title)
+                
+                # NGO FIX: Strip Markdown bold tags (**) from values before rendering to image
+                # Matplotlib tables don't render Markdown, so tags appear literally (ugly)
+                def clean_val(v):
+                    return str(v).replace("**", "").strip()
+                
+                clean_headers = [clean_val(h) for h in headers]
+                clean_rows = [[clean_val(c) for c in r] for r in rows]
+
+                # Nếu dữ liệu chỉ có 1 cột (vd list đơn, dict 1 key, hoặc table 1 header)
+                # thì giữ nguyên dạng text, không tạo ảnh để tránh report "rỗng".
+                non_empty_cols = [h for h in clean_headers if h]
+                if len(non_empty_cols) <= 1:
+                    logger.debug("[VISUALIZER] Single-column data detected. Skipping image rendering, using text only.")
+                    return response_data if isinstance(response_data, dict) else {"text": text}
+
+                image_bytes = render_table_to_image(clean_rows, clean_headers, title=title)
                 
                 if image_bytes:
-                    logger.info(f"[VISUALIZER] Successfully rendered {title} to image. Stripping raw data from text.")
-                    
-                    clean_text = text.replace(match_text, "").strip()
-                    if "|" in clean_text and clean_text.count("|") > 4:
-                        clean_text = re.sub(r'(\n|^)\|.*?\|.*?(?=\n[^|]|$)', '\n', clean_text, flags=re.DOTALL)
-                    
-                    clean_text = re.sub(r'\n{3,}', '\n\n', clean_text).strip()
+                    # NGO FIX: Better text splitting to preserve intro but replace data with summary
+                    intro_text = text[:text.find(match_text)].strip()
                     
                     # --- INTELLIGENT SUMMARIZATION ---
-                    if len(clean_text) < 15:
-                        logger.info(f"[VISUALIZER] Text is sparse. Requesting LLM summary.")
-                        try:
-                            from core.brain.model import SharedModelProvider
-                            from core.brain.prompts.registry import get_prompt_registry
-                            
-                            model = SharedModelProvider.get_model()
-                            registry = get_prompt_registry()
-                            
-                            from config.settings import settings
-                            bot_name = getattr(settings, 'bot_name', 'Brain')
-                            
-                            summary_prompt = registry.get("capabilities.data_realm.data_report_summary", 
-                                                          data_text=match_text,
-                                                          user_query=user_message,
-                                                          bot_name=bot_name)
-                            resp = await model.ainvoke(summary_prompt)
-                            llm_summary = resp.content if hasattr(resp, 'content') else str(resp)
-                            
-                            if llm_summary and len(llm_summary) > 5:
-                                clean_text = llm_summary.strip()
-                                logger.info("[VISUALIZER] LLM Summary generated successfully.")
-                        except Exception as summarization_error:
-                            logger.error(f"[VISUALIZER] Failed to generate LLM summary: {summarization_error}")
-                            if not clean_text:
-                                clean_text = f"NivaSound Data Report for {title}"
+                    # We ALWAYS want a summary if it's a visual report
+                    try:
+                        from core.brain.model import SharedModelProvider
+                        from core.brain.prompts.registry import get_prompt_registry
+                        
+                        model = SharedModelProvider.get_model()
+                        registry = get_prompt_registry()
+                        
+                        from config.settings import settings
+                        bot_name = getattr(settings, 'bot_name', 'Brain')
+                        
+                        # NGO FIX: Correct key from data_realm to data
+                        summary_prompt = registry.get("capabilities.data.data_report_summary", 
+                                                      data_text=match_text,
+                                                      user_query=user_message,
+                                                      bot_name=bot_name)
+                        resp = await model.ainvoke(summary_prompt)
+                        from core.brain.utils import get_llm_content
+                        llm_summary = get_llm_content(resp).strip()
+                        
+                        if llm_summary:
+                            # Combine intro with summary
+                            clean_text = f"{intro_text}\n\n{llm_summary}" if intro_text else llm_summary
+                        else:
+                            clean_text = intro_text or "NivaSound Data Report"
+                    except Exception as summarization_error:
+                        logger.error(f"[VISUALIZER] Failed to generate LLM summary: {summarization_error}")
+                        clean_text = intro_text or f"NivaSound Data Report for {title}"
                     
                     if isinstance(response_data, str):
                         return { "text": clean_text, "photo": image_bytes, "caption": clean_text[:1000] }
