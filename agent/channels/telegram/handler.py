@@ -149,8 +149,21 @@ class TelegramCommandHandler:
         if isinstance(response, str):
             response = SecurityShield.detect_secret_leakage(response)
         elif isinstance(response, dict) and "text" in response:
-             response["text"] = SecurityShield.detect_secret_leakage(response["text"])
-             
+            response["text"] = SecurityShield.detect_secret_leakage(response["text"])
+
+        # 3. CHOICE DETECTION: Enrich replies that ask the user to choose
+        # between explicit options with inline buttons. Let the Brain decide
+        # which answers are true choice prompts.
+        try:
+            from utils.choice_detector import enhance_response_for_telegram
+            response = await enhance_response_for_telegram(
+                response,
+                user_message=message.content,
+                language=getattr(message, "language", "vi"),
+            )
+        except Exception as e:
+            logger.warning(f"[TELEGRAM] Choice enrichment skipped due to error: {e}")
+
         return response
             
     async def _cmd_stats_viz(self, args: list, msg: Message) -> Optional[str]:
@@ -187,15 +200,30 @@ class TelegramCommandHandler:
         callback_id = message.metadata.get("callback_id")
         
         logger.info(f"[TELEGRAM] Callback received: {data} (ID: {callback_id})")
-        
-        # 1. Confirmation Actions (Confirmation logic from decision nodes)
-        if data.startswith("confirm:"):
-            # Provide immediate feedback to clear loading state
-            if callback_id and hasattr(self.channel, 'answer_callback_query'):
+
+        # 0. Always clear Telegram loading state if possible
+        if callback_id and hasattr(self.channel, "answer_callback_query"):
+            try:
                 await self.channel.answer_callback_query(callback_id)
-            return await self._generate_brain_feedback(f"I received the response: {data.split(':')[1]}", message)
-            
-        # 4. Centralized Approval Actions (CLI, System, etc.)
+            except Exception as e:
+                logger.debug(f"[TELEGRAM] answer_callback_query failed: {e}")
+
+        # 1. Direct choice selections (Brain-driven choice detector)
+        # Format: "choice:OPTION_ID" — treat as if the user had replied with OPTION_ID
+        if data.startswith("choice:"):
+            choice_value = data.split(":", 1)[1]
+            logger.info(f"[TELEGRAM] Choice callback selected: {choice_value}")
+            # Reuse the same message metadata but override content for chat handling
+            message.content = choice_value
+            return await self._cmd_chat(choice_value, message, processed=None)
+
+        # 2. Confirmation Actions (Confirmation logic from decision nodes)
+        if data.startswith("confirm:"):
+            return await self._generate_brain_feedback(
+                f"I received the response: {data.split(':')[1]}", message
+            )
+
+        # 3. Centralized Approval Actions (CLI, System, etc.)
         from utils.notification import NotificationManager
         approval_response = await NotificationManager.handle_approval_callback(
             data=data,
