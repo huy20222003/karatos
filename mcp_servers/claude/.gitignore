@@ -1,0 +1,54 @@
+############################
+# Python / FastAPI project #
+############################
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+env.bak/
+
+# Environment & secrets
+.env
+.env.*.local
+*.secret
+*.key
+
+# Packaging / build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Logs & runtime files
+*.log
+logs/
+uvicorn*.log
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.tox/
+.cache/
+
+# IDE / editor
+.idea/
+.vscode/
+*.code-workspace
+
+# OS-specific junk
+.DS_Store
+Thumbs.db
+
