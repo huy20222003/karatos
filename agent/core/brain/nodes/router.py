@@ -32,16 +32,9 @@ class RouterModel(BrainModel):
         super().__init__(mode="routing")
 
     async def think(self, prompt: str, phase: str = "routing", mood: str = "OPTIMISTIC", energy: float = 1.0, tools: list = None) -> str:
-        # NGO: Add custom debug logging for Router
-        import time
-        t_start = time.time()
-        logger.debug(f"[ROUTER_DEBUG] Sending prompt to LLM (Prompt Length: {len(prompt)} chars)...")
-        
         # Use parent think method (increased timeout for routing)
         try:
             response = await super().think(prompt, phase=phase, mood=mood, energy=energy, timeout=600.0, tools=tools)
-            t_end = time.time()
-            logger.debug(f"[ROUTER_DEBUG] LLM Response received in {t_end - t_start:.2f}s")
             return response
         except Exception as e:
             logger.error(f"[ROUTER_DEBUG] LLM thinking failed: {e}")
@@ -73,7 +66,10 @@ async def chat_route_node(state: ChatState) -> ChatState:
         from core.identity import AgentIdentity
         from utils.sentiment import analyze_sentiment
         
-        identity = AgentIdentity()
+        # Use cached identity from parallel_startup (eliminates duplicate load_from_memory)
+        identity = state.get("context", {}).get("identity")
+        if not identity:
+            identity = AgentIdentity()
         state_memory = state.get("context", {}).get("memory")
         chat_id = state.get("chat_id")
         
@@ -99,8 +95,6 @@ async def chat_route_node(state: ChatState) -> ChatState:
         # 3. Persist updated affinity (CIE Tier 3)
         if state_memory and chat_id:
             await state_memory.remember(f"affinity_score:{chat_id}", identity.user_affinity, importance=0.1)
-            
-        logger.debug(f"[ROUTER] Embodiment - Affinity: {identity.user_affinity:.2f}, Mood: {identity.current_mood}, Energy: {identity.energy:.2f}")
     except Exception as e:
         logger.warning(f"[ROUTER] Failed to compute embodiment state: {e}")
     
@@ -118,19 +112,13 @@ async def chat_route_node(state: ChatState) -> ChatState:
     a2a_match = re.search(r'\s*\[A2A_BUS: Message from @?([\w_-]+)\]', msg)
     
     # --- A2A METADATA & PEER DISCOVERY (Universal) ---
-    # Fetch registered bots from mailbox to improve name resolution for ALL messages
-    peer_bot_map = {}
+    # Use cached peer bot map from parallel_startup (eliminates duplicate MCP call)
+    peer_bot_map = state.get("context", {}).get("peer_bot_map", {})
     known_peers = []
-    try:
-        from skills.mcp_realm import get_mcp_realm
-        mcp = get_mcp_realm()
-        peer_bot_map = await mcp.get_bot_registrations()
-        if peer_bot_map:
-            for name, tag in peer_bot_map.items():
-                known_peers.append(name.lower())
-                known_peers.append(tag.lower().lstrip('@'))
-    except Exception as e:
-        logger.debug(f"[ROUTER] Failed to fetch peer registrations: {e}")
+    if peer_bot_map:
+        for name, tag in peer_bot_map.items():
+            known_peers.append(name.lower())
+            known_peers.append(tag.lower().lstrip('@'))
 
     is_bus_a2a = bool(a2a_match)
     sender_bot = a2a_match.group(1) if a2a_match else None
@@ -186,32 +174,17 @@ async def chat_route_node(state: ChatState) -> ChatState:
     # NGO: Always preserve ACR confidence as base
     state["confidence"] = conf
     
-    if tier == "auto" and conf > 0.92 and ppf_decision:
-
-        # HIGH CONFIDENCE: Brain routes instinctively (no LLM needed)
-        logger.info(f"[ROUTER] ⚡ Instinctive route: {ppf_decision} (confidence: {conf:.2f}) — no LLM needed")
-        _apply_routing_decision(state, ppf_decision, msg)
-        
-        from ..algorithms.feedback_bus import get_feedback_bus
-        bus = get_feedback_bus()
-        
-        state["thoughts"].append(f"Router: Instinctive decision `{ppf_decision}` (conf={conf:.2f}). No deliberation needed.")
-        ppf.record(ppf_features, ppf_decision)
-        acr.record_query(msg, ppf_decision)
-        bus.emit("ROUTING_OUTCOME", {
-            "decision": ppf_decision, "method": "INSTINCT_AUTO",
-            "ppf_bypassed": True, "confidence": conf,
-        }, source="router")
-        state["phase"] = "routed"
-        state["_ppf_features"] = ppf_features.tolist()
-        return state
+    # NGO: User requested that ALL decisions go through the Brain (LLM), regardless of confidence.
+    # Disabling the Instinctive Auto-route bypass.
+    # if tier == "auto" and conf > 0.92 and ppf_decision:
+    #     ...
+    pass
     
     # BRIEF or FULL TIER: Need LLM assistance
     import json
     from skills.registry import get_skill_registry
     registry = get_skill_registry()
-    active_tools = await registry.get_tool_schemas()
-    skills_compact = "\n".join([f"- {s['name']}: {s['description']}" for s in active_tools])
+    skills_compact = registry.get_enriched_capabilities()
 
     from ..prompts.registry import get_prompt_registry
     p_registry = get_prompt_registry()
@@ -243,7 +216,15 @@ async def chat_route_node(state: ChatState) -> ChatState:
     if signals.get("ppf", 0) < 0.3 and signals.get("history", 0) < 0.3:
         intuition_signal += " (Brand new interaction pattern)."
 
-    peers_list = ", ".join([f"@{tag.lstrip('@')} ({name})" for name, tag in peer_bot_map.items()]) if peer_bot_map else "None"
+    # NGO FIX: Filter out own bot from the peers list to ensure "Private Chat Exception" triggers correctly
+    all_peers = ", ".join([f"@{tag.lstrip('@')} ({name})" for name, tag in peer_bot_map.items()]) if peer_bot_map else "None"
+    logger.debug(f"[ROUTER] Raw bot registrations: {all_peers}")
+    
+    filtered_peers = {name: tag for name, tag in peer_bot_map.items() 
+                     if name.lower() != my_name and tag.lower().lstrip('@') != (my_username or "").lstrip('@')}
+    peers_list = ", ".join([f"@{tag.lstrip('@')} ({name})" for name, tag in filtered_peers.items()]) if filtered_peers else "None"
+    
+    logger.info(f"[ROUTER] Identified peers (filtered): {peers_list}")
     
     dynamic_examples = await registry.get_routing_examples()
     
@@ -251,7 +232,7 @@ async def chat_route_node(state: ChatState) -> ChatState:
     # When confidence is moderate (0.50-0.80), use minimal prompt — brain
     # already has a good guess, just needs LLM confirmation.
     if tier == "brief" and ppf_decision:
-        brief_scaffold = p_registry.get("system.router_brief.prompt",
+        brief_scaffold = p_registry.get("system.router.router_brief",
                                         bot_name=getattr(settings, 'bot_name', 'Brain'),
                                         bot_username=getattr(settings, 'bot_username', 'bot'),
                                         peers=peers_list,
@@ -259,7 +240,8 @@ async def chat_route_node(state: ChatState) -> ChatState:
                                         ppf_decision=ppf_decision,
                                         hint=hint,
                                         first_message=first_message,
-                                        skills_compact=skills_compact[:300],
+                                        skills_compact=skills_compact[:1000],  # Increased budget
+                                        dynamic_examples=dynamic_examples,     # Added missing examples!
                                         msg=msg)
         
         logger.info(f"[ROUTER] 📋 Brief tier — centralized scaffold ({len(brief_scaffold)} chars)")
@@ -277,7 +259,7 @@ async def chat_route_node(state: ChatState) -> ChatState:
                               dynamic_examples=dynamic_examples,
                               bot_name=getattr(settings, 'bot_name', 'Brain'),
                               bot_username=getattr(settings, 'bot_username', 'bot'),
-                              user_pronoun=getattr(settings, 'user_pronoun', 'Sếp'),
+                              user_pronoun=getattr(settings, 'user_pronoun', 'Anh'),
                               bot_pronoun=getattr(settings, 'bot_pronoun', 'em'),
                               mood=state.get('mood', 'OPTIMISTIC'), 
                               energy=f"{state.get('energy_level', 1.0)*100:.0f}%")
@@ -309,6 +291,16 @@ async def chat_route_node(state: ChatState) -> ChatState:
         else:
             decision = "CHAT"
     
+    # NGO SAFETY OVERRIDE (Phase 21.6): Enforce Private Chat integrity.
+    # If in private chat, NONE is not allowed unless the message is empty or system-only.
+    if peers_list == "None" and decision == "NONE":
+        # Only allow NONE if there's absolutely no content or it's a duplicate
+        if msg.strip() or state.get("context", {}).get("vision_extracted"):
+            logger.info("[ROUTER] 🛡️ Private Chat Constraint: Overriding NONE -> CHAT to maintain interaction.")
+            decision = "CHAT"
+            res["decision"] = "CHAT"
+            res["rationale"] = "Private chat requirement: AI must respond to user input."
+    
     # Phase 21.3: Bayesian Fusion of Intuition (ACR) and Conscious Reasoning (LLM)
     llm_conf = res.get("confidence")
     conscious_signal = float(llm_conf) if llm_conf is not None else 0.85 # Standard signal strength for active decision
@@ -325,9 +317,6 @@ async def chat_route_node(state: ChatState) -> ChatState:
     )
     
     state["confidence"] = fused_result["confidence"]
-    logger.info(f"[ROUTER] Bayesian Fused Confidence: {state['confidence']:.2f}")
-    if fused_result.get("dissonance", 0) > 0.5:
-         logger.warning(f"[ROUTER] Cognitive Dissonance: Intuition vs reasoning conflict.")
 
 
 
@@ -368,6 +357,6 @@ def _apply_routing_decision(state: ChatState, decision: str, msg: str, res: dict
     else:  # CHAT
         logger.info(f"[ROUTER] Routing to CHAT (Persona) for: {msg}")
         state["needs_planning"] = False
-        state["is_fast_track"] = True
+        state["is_fast_track"] = False # NGO: Disable auto-fast-track to preserve History Context
 
 

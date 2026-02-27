@@ -37,7 +37,6 @@ async def chat_plan_node(state: ChatState) -> ChatState:
     """
     
     if state.get("plan"):
-        logger.info("[PLANNER] Skipping planning (Reflex plan already exists)")
         state["phase"] = "planned"
         return state
 
@@ -51,30 +50,59 @@ async def chat_plan_node(state: ChatState) -> ChatState:
     ctx_manager = ConversationContextManager(char_limit_per_message=1000, total_history_limit=3000)
     history_str = await ctx_manager.get_optimized_history(state["chat_id"], state["context"]["memory"], limit=settings.context_planning_limit)
 
-    # --- FULL CONTEXT: Enable all tools for strategic planning ---
+    # --- INLINE CAPABILITY SELECTION (Phase 2: replaces separate scanner LLM call) ---
+    # Lightweight keyword matching to pre-filter tools — no LLM overhead.
+    # The planner still sees all tools but relevant ones are prioritized.
     tool_schemas = await registry.get_tool_schemas()
-    skills_list = []
-    for s in tool_schemas:
-        params_str = ""
-        if s.get("parameters") and s["parameters"].get("properties"):
-            params_str = " (params: " + ", ".join(s["parameters"]["properties"].keys()) + ")"
-        skills_list.append(f"- {s['name']}{params_str}: {s['description']}")
     
-    skills_json = "\n".join(skills_list)
+    msg_lower = msg.lower()
+    msg_words = set(msg_lower.split())
     
-    # --- PEER AWARENESS: Fetch co-workers for A2A coordination ---
+    def _tool_relevance_score(schema: dict) -> int:
+        """Simple keyword relevance score — no LLM needed."""
+        score = 0
+        name = schema.get("name", "").lower()
+        desc = schema.get("description", "").lower()
+        aliases = [a.lower() for a in schema.get("aliases", [])]
+        
+        # Check if tool name or key description words appear in user message
+        if name in msg_lower or any(a in msg_lower for a in aliases):
+            score += 3
+        for word in name.replace("_", " ").split():
+            if word in msg_words and len(word) > 2:
+                score += 2
+        for alias in aliases:
+            if alias in msg_words:
+                score += 2
+        for word in msg_words:
+            if len(word) > 3 and word in desc:
+                score += 1
+        return score
+    
+    # Score all tools
+    scored = [(s, _tool_relevance_score(s)) for s in tool_schemas]
+    relevant = [s for s, score in scored if score > 0]
+    
+    if relevant and len(relevant) < len(tool_schemas):
+        # Show relevant tools first, then remaining (planner sees all but focused)
+        remaining = [s for s, score in scored if score == 0]
+        tool_schemas = relevant + remaining
+        logger.info(f"[PLANNER] Inline capability filter: {len(relevant)} relevant / {len(tool_schemas)} total.")
+    
+    # Use enriched capabilities for the final prompt injection
+    skills_json = registry.get_enriched_capabilities()
+    
+    # --- PEER AWARENESS: Use cached peer bot map (fetched once in parallel_startup) ---
     peers_str = "None"
-    try:
-        from skills.mcp_realm import get_mcp_realm
-        mcp = get_mcp_realm()
-        peer_bot_map = await mcp.get_bot_registrations()
-        if peer_bot_map:
-            peers_str = ", ".join([f"@{tag} ({name})" for name, tag in peer_bot_map.items()])
-    except:
-        pass
+    peer_bot_map = state.get("context", {}).get("peer_bot_map", {})
+    if peer_bot_map:
+        peers_str = ", ".join([f"@{tag} ({name})" for name, tag in peer_bot_map.items()])
 
     from ..prompts.registry import get_prompt_registry
     p_registry = get_prompt_registry()
+    
+    from ..hardware import HardwareEngine
+    os_platform = HardwareEngine.get_platform()
     
     my_username = f"@{getattr(settings, 'bot_username', '')}"
 
@@ -86,12 +114,12 @@ async def chat_plan_node(state: ChatState) -> ChatState:
                              chat_id=str(state["chat_id"]),
                              bot_name=getattr(settings, 'bot_name', 'SystemBot'),
                              my_username=my_username,
+                             os_platform=os_platform,
                              mood=state.get('mood', 'OPTIMISTIC'), 
                              energy=f"{state.get('energy_level', 1.0)*100:.0f}%")
 
     model = PlannerModel()
     # Use native tool calling for planning
-    logger.debug(f"[PLANNER_DEBUG] Sending prompt to LLM (Prompt Length: {len(prompt)} chars)...")
     tool_calls = await model.think(prompt, phase="planning", mood=state.get('mood', 'OPTIMISTIC'), energy=state.get('energy_level', 1.0), tools=[create_plan])
     
     from ..utils import parse_tool_call_robust

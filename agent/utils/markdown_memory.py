@@ -68,55 +68,118 @@ class MarkdownMemory:
         self.index = MemoryIndex(index_file)
 
     def _ensure_directories(self):
-        """Create storage hierarchy if missing"""
-        # Private Bot Storage
+        """Create storage hierarchy matching all 18 MemoryCategory values."""
         os.makedirs(self.base_path, exist_ok=True)
-        os.makedirs(os.path.join(self.base_path, "memory", "sessions"), exist_ok=True)
-        os.makedirs(os.path.join(self.base_path, "memory", "learnings"), exist_ok=True)
-        os.makedirs(os.path.join(self.base_path, "memory", "decisions"), exist_ok=True)
-        os.makedirs(os.path.join(self.base_path, "memory", "experiences"), exist_ok=True)
-        os.makedirs(os.path.join(self.base_path, "memory", "reflections"), exist_ok=True)
+        
+        # ═══ EPISODIC MEMORY ═══
+        os.makedirs(os.path.join(self.base_path, "memory", "sessions"), exist_ok=True)      # CONTEXT
+        os.makedirs(os.path.join(self.base_path, "memory", "experiences"), exist_ok=True)    # EXPERIENCE
+        os.makedirs(os.path.join(self.base_path, "memory", "decisions"), exist_ok=True)      # DECISION
+        os.makedirs(os.path.join(self.base_path, "memory", "emotions"), exist_ok=True)       # EMOTION
+        
+        # ═══ SEMANTIC MEMORY ═══
+        os.makedirs(os.path.join(self.base_path, "memory", "learnings"), exist_ok=True)      # LEARNING
+        os.makedirs(os.path.join(self.base_path, "memory", "facts"), exist_ok=True)          # FACT
+        os.makedirs(os.path.join(self.base_path, "memory", "procedures"), exist_ok=True)     # PROCEDURAL
+        
+        # ═══ IDENTITY MEMORY ═══
+        os.makedirs(os.path.join(self.base_path, "profiles", "identity"), exist_ok=True)     # PERSONA
+        os.makedirs(os.path.join(self.base_path, "memory", "reflections"), exist_ok=True)    # REFLECTION
+        os.makedirs(os.path.join(self.base_path, "memory", "beliefs"), exist_ok=True)        # BELIEF
+        
+        # ═══ SOCIAL MEMORY ═══
+        os.makedirs(os.path.join(self.base_path, "profiles", "users"), exist_ok=True)        # USER_PROFILE + USER_HISTORY
+        os.makedirs(os.path.join(self.base_path, "profiles", "relationships"), exist_ok=True) # RELATIONSHIP
+        os.makedirs(os.path.join(self.base_path, "profiles", "dynamics"), exist_ok=True)     # SENTIMENT
+        
+        # ═══ EXECUTIVE MEMORY ═══
+        os.makedirs(os.path.join(self.base_path, "memory", "goals"), exist_ok=True)          # GOAL
+        os.makedirs(os.path.join(self.base_path, "memory", "habits"), exist_ok=True)         # HABIT
+        
+        # ═══ SYSTEM MEMORY ═══
+        os.makedirs(os.path.join(self.base_path, "memory", "system"), exist_ok=True)         # SYSTEM
+        os.makedirs(os.path.join(self.base_path, "memory", "a2a"), exist_ok=True)            # A2A
+        os.makedirs(os.path.join(self.base_path, "sys", "metadata"), exist_ok=True)          # METADATA
+        
+        # ═══ INFRASTRUCTURE ═══
         os.makedirs(os.path.join(self.base_path, "memory", "graph"), exist_ok=True)
-        os.makedirs(os.path.join(self.base_path, "profiles", "users"), exist_ok=True)
-        os.makedirs(os.path.join(self.base_path, "profiles", "identities"), exist_ok=True)
-        os.makedirs(os.path.join(self.base_path, "profiles", "dynamics"), exist_ok=True)
-        os.makedirs(os.path.join(self.base_path, "profiles", "identity"), exist_ok=True)
         os.makedirs(os.path.join(self.base_path, "sys", "cache"), exist_ok=True)
         os.makedirs(os.path.join(self.base_path, "sys", "intuition"), exist_ok=True)
         os.makedirs(os.path.join(self.base_path, "vault"), exist_ok=True)
 
     def _get_file_path(self, category: str, key: str) -> str:
-        """Determines the correct file based on category and key."""
+        """Maps every MemoryCategory to a dedicated storage file. No general_memory.md fallback."""
         category = category.upper()
 
-        # PRIVATE CATEGORIES (Bot Specific)
+        # ═══ EPISODIC ═══
         if category == "CONTEXT" or "chat:" in key:
-            # chat_id from key "chat:chat_id:timestamp"
             if "chat:" in key:
                 parts = key.split(":")
                 if len(parts) > 1:
                     chat_id = parts[1]
                     return os.path.join(self.base_path, "memory", "sessions", f"{chat_id}.md")
             return os.path.join(self.base_path, "memory", "sessions", "general.md")
-            
-        if category == "USER_HISTORY" or "user_" in key:
-            return os.path.join(self.base_path, "profiles", "users", "profiles.md")
-            
-        if category == "DECISION" or "dec:" in key:
-            return os.path.join(self.base_path, "memory", "decisions", "history.md")
-            
-        if category == "LEARNING":
-            return os.path.join(self.base_path, "memory", "learnings", "knowledge.md")
 
         if category == "EXPERIENCE":
             return os.path.join(self.base_path, "memory", "experiences", "history.md")
 
+        if category == "DECISION" or "dec:" in key:
+            return os.path.join(self.base_path, "memory", "decisions", "history.md")
+
+        if category == "EMOTION":
+            return os.path.join(self.base_path, "memory", "emotions", "chronicle.md")
+
+        # ═══ SEMANTIC ═══
+        if category == "LEARNING":
+            return os.path.join(self.base_path, "memory", "learnings", "knowledge.md")
+
+        if category == "FACT":
+            return os.path.join(self.base_path, "memory", "facts", "world.md")
+
+        if category == "PROCEDURAL":
+            return os.path.join(self.base_path, "memory", "procedures", "workflows.md")
+
+        # ═══ IDENTITY ═══
+        if category == "PERSONA":
+            return os.path.join(self.base_path, "profiles", "identity", "persona.md")
+
         if category == "REFLECTION":
             return os.path.join(self.base_path, "memory", "reflections", "lessons.md")
 
+        if category == "BELIEF":
+            return os.path.join(self.base_path, "memory", "beliefs", "principles.md")
+
+        # ═══ SOCIAL ═══
+        if category == "USER_PROFILE":
+            return os.path.join(self.base_path, "profiles", "users", "preferences.md")
+
+        if category == "USER_HISTORY" or "user_" in key:
+            return os.path.join(self.base_path, "profiles", "users", "history.md")
+
+        if category == "RELATIONSHIP":
+            return os.path.join(self.base_path, "profiles", "relationships", "bonds.md")
+
         if category == "SENTIMENT":
             return os.path.join(self.base_path, "profiles", "dynamics", "moods.md")
-            
+
+        # ═══ EXECUTIVE ═══
+        if category == "GOAL":
+            return os.path.join(self.base_path, "memory", "goals", "objectives.md")
+
+        if category == "HABIT":
+            return os.path.join(self.base_path, "memory", "habits", "patterns.md")
+
+        # ═══ SYSTEM ═══
+        if category == "SYSTEM":
+            return os.path.join(self.base_path, "memory", "system", "state.md")
+
+        if category == "METADATA":
+            return os.path.join(self.base_path, "sys", "metadata", "technical.md")
+
+        if category == "A2A":
+            return os.path.join(self.base_path, "memory", "a2a", "messages.md")
+
+        # Fallback (should rarely be reached now)
         return os.path.join(self.base_path, "memory", "general_memory.md")
 
     def append(self, entry: MarkdownMemoryEntry):
@@ -235,7 +298,12 @@ class MarkdownMemory:
                     return entry
                     
         # Fallback to slow scan if not in index (e.g. legacy data)
-        categories = ["context", "user_history", "decision", "learning"]
+        categories = [
+            "context", "user_history", "decision", "learning", "experience",
+            "reflection", "fact", "procedural", "persona", "belief",
+            "user_profile", "relationship", "sentiment", "goal", "habit",
+            "system", "metadata", "a2a", "emotion"
+        ]
         for cat in categories:
             file_path = self._get_file_path(cat, key)
             if os.path.exists(file_path):
@@ -249,46 +317,116 @@ class MarkdownMemory:
 
     def search_by_keywords(self, keywords: List[str], limit: int = 15) -> List[MarkdownMemoryEntry]:
         """
-        Phase 5: Fast Markdown Retrieval using regex/keyword matching.
-        Scans all relevant text-based memory files for keyword overlaps.
+        BM25 Ranked Memory Retrieval (Okapi Best Match 25).
+        
+        Replaces naive keyword counting with industry-standard information retrieval:
+        - Term Frequency (TF): Diminishing returns for repeated keywords
+        - Inverse Document Frequency (IDF): Rare terms weighted higher
+        - Document Length Normalization: Short focused entries rank above long noisy ones
+        
+        Parameters: k1=1.5, b=0.75 (standard IR defaults)
         """
         if not keywords:
             return []
             
-        import re
-        matches = []
+        import math
         
-        # Directories to scan for semantic recall
-        scan_dirs = ["learnings", "experiences", "reflections", "decisions"]
-        
-        for d in scan_dirs:
+        # BM25 parameters
+        k1 = 1.5   # Term frequency saturation
+        b = 0.75   # Document length normalization
+
+        # 1. Collect all entries from ALL scan directories
+        all_entries = []
+        # Memory directories (covers: CONTEXT, EXPERIENCE, DECISION, EMOTION, LEARNING, FACT, PROCEDURAL, REFLECTION, BELIEF, GOAL, HABIT, SYSTEM, A2A)
+        memory_dirs = [
+            "sessions", "experiences", "decisions", "emotions",
+            "learnings", "facts", "procedures",
+            "reflections", "beliefs",
+            "goals", "habits",
+            "system", "a2a", "graph"
+        ]
+        for d in memory_dirs:
             dir_path = os.path.join(self.base_path, "memory", d)
             if not os.path.exists(dir_path):
                 continue
-                
             for filename in os.listdir(dir_path):
                 if not filename.endswith(".md"):
                     continue
                 file_path = os.path.join(dir_path, filename)
                 entries = self.load_all_from_file(file_path)
-                
-                for entry in entries:
-                    content_text = str(entry.value).lower()
-                    key_text = entry.key.lower()
-                    
-                    # Count how many keywords match
-                    match_count = sum(1 for k in keywords if k in content_text or k in key_text)
-                    
-                    if match_count > 0:
-                        matches.append((match_count, entry))
+                all_entries.extend(entries)
         
-        # Sort by match count (descending) and importance
-        matches.sort(key=lambda x: (x[0], x[1].importance), reverse=True)
+        # Profile directories (USER_PROFILE, SENTIMENT, RELATIONSHIP, PERSONA)
+        profile_dirs = ["users", "dynamics", "relationships", "identity"]
+        for d in profile_dirs:
+            dir_path = os.path.join(self.base_path, "profiles", d)
+            if not os.path.exists(dir_path):
+                continue
+            for filename in os.listdir(dir_path):
+                if not filename.endswith(".md"):
+                    continue
+                file_path = os.path.join(dir_path, filename)
+                entries = self.load_all_from_file(file_path)
+                all_entries.extend(entries)
         
-        # Deduplicate by key and return top `limit`
+        # Root-level memory files
+        root_general = os.path.join(self.base_path, "memory", "general_memory.md")
+        if os.path.exists(root_general):
+            all_entries.extend(self.load_all_from_file(root_general))
+
+        if not all_entries:
+            return []
+
+        # 2. Build document texts + compute avg document length
+        doc_texts = []
+        doc_lengths = []
+        for entry in all_entries:
+            text = f"{entry.key} {str(entry.value)}".lower()
+            doc_texts.append(text)
+            doc_lengths.append(len(text.split()))
+        
+        N = len(all_entries)  # Total document count
+        avgdl = sum(doc_lengths) / N if N > 0 else 1  # Average document length
+        
+        # 3. Compute IDF for each keyword
+        # IDF = log((N - df + 0.5) / (df + 0.5) + 1)
+        keyword_idf = {}
+        for kw in keywords:
+            df = sum(1 for text in doc_texts if kw in text)  # Document frequency
+            idf = math.log((N - df + 0.5) / (df + 0.5) + 1)
+            keyword_idf[kw] = idf
+
+        # 4. Score each document with BM25
+        scored = []
+        for i, entry in enumerate(all_entries):
+            text = doc_texts[i]
+            dl = doc_lengths[i]  # Current doc length
+            
+            score = 0.0
+            for kw in keywords:
+                # Term frequency in this document
+                tf = text.count(kw)
+                if tf == 0:
+                    continue
+                    
+                # BM25 formula: IDF * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * dl / avgdl))
+                idf = keyword_idf[kw]
+                numerator = tf * (k1 + 1)
+                denominator = tf + k1 * (1 - b + b * dl / avgdl)
+                score += idf * (numerator / denominator)
+            
+            if score > 0:
+                # Boost by importance (0-1 range, minor influence)
+                score *= (1 + entry.importance * 0.3)
+                scored.append((score, entry))
+        
+        # 5. Sort by BM25 score descending
+        scored.sort(key=lambda x: x[0], reverse=True)
+        
+        # 6. Deduplicate by key and return top `limit`
         results = []
         seen_keys = set()
-        for count, entry in matches:
+        for score, entry in scored:
             if entry.key not in seen_keys:
                 seen_keys.add(entry.key)
                 results.append(entry)
@@ -296,3 +434,4 @@ class MarkdownMemory:
                     break
                     
         return results
+

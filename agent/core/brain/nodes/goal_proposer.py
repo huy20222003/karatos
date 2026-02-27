@@ -38,6 +38,14 @@ async def propose_goals_node(state: AgentState) -> AgentState:
     decisions = await memory.search(category=MemoryCategory.DECISION, limit=3, min_importance=0.7)
     decision_str = "\n".join([f"- {d.value.get('action')} -> {d.value.get('outcome')}" for d in decisions]) if decisions else "No major decisions yet."
 
+    # 3. Get active Goals (What we're already pursuing)
+    existing_goals = await memory.search(category=MemoryCategory.GOAL, limit=5, min_importance=0.5)
+    goal_str = "\n".join([f"- {g.value}" for g in existing_goals]) if existing_goals else "No active goals."
+
+    # 4. Get Habits (Recurring patterns to consider)
+    habits = await memory.search(category=MemoryCategory.HABIT, limit=3, min_importance=0.5)
+    habit_str = "\n".join([f"- {h.value}" for h in habits]) if habits else "No behavioral patterns detected."
+
     # Combined context into reflection payload
     current_action = state.get("action_result", {})
     action_str = f"Action: {current_action.get('action')} - Success: {current_action.get('success')}\nResult: {str(current_action.get('result'))[:1000]}" if current_action else "No action executed this cycle."
@@ -48,7 +56,9 @@ async def propose_goals_node(state: AgentState) -> AgentState:
         f"{action_str}\n\n"
         f"=== STRATEGIC CONTEXT (HISTORY) ===\n"
         f"Recent Learnings:\n{learning_str}\n\n"
-        f"Recent Key Decisions:\n{decision_str}"
+        f"Recent Key Decisions:\n{decision_str}\n\n"
+        f"Active Goals (avoid duplicates):\n{goal_str}\n\n"
+        f"Behavioral Patterns:\n{habit_str}"
     )
     
     # Build prompt
@@ -89,7 +99,7 @@ async def propose_goals_node(state: AgentState) -> AgentState:
                     await memory.remember(
                         key=f"goal:{goal.get('id', 'unknown')}:{identity.current_mood}",
                         value=goal,
-                        category=MemoryCategory.LEARNING,
+                        category=MemoryCategory.GOAL,
                         importance=0.6,
                         expires_in_days=7
                     )

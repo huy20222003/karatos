@@ -13,8 +13,10 @@ Confidence = (S1^w1 * S2^w2 * S3^w3) ^ (1 / (w1+w2+w3))
 """
 import math
 import time
+import json
 from typing import Optional
 from collections import deque
+from pathlib import Path
 
 import numpy as np
 
@@ -46,10 +48,17 @@ class ConfidenceEngine:
     TIER_BRIEF = 0.50   # Use lightweight LLM prompt
     # Below 0.50 → Full LLM reasoning
     
-    def __init__(self, max_recent: int = 50):
+    def __init__(self, max_recent: int = 100, history_file: str = None):
         self.weights = dict(self.DEFAULT_WEIGHTS)
+        self.max_recent = max_recent
+        
+        if history_file is None:
+            history_file = str(Path(__file__).parent.parent.parent.parent / "data" / "acr_history.json")
+        self.history_file = history_file
+        
         self._recent_queries: deque[dict] = deque(maxlen=max_recent)
         self._accuracy_log: list[dict] = []  # For dynamic weight adaptation
+        self._load_history()
     
     def compute_confidence(
         self,
@@ -92,13 +101,17 @@ class ConfidenceEngine:
         
         if conscious_signal > 0:
             # posterior = Bayesian fusion of prior (intuition) and likelihood (reasoning)
-            confidence = self._bayesian_fusion(prior_confidence, conscious_signal)
+            # NGO FIX: If prior is near zero (unknown), we don't let it kill the posterior completely.
+            # We treat a zero intuition as "no opinion" (0.5) instead of "sure it's wrong" (0.0).
+            effective_prior = max(prior_confidence, 0.45) if prior_confidence < 0.2 else prior_confidence
+            
+            confidence = self._bayesian_fusion(effective_prior, conscious_signal)
             
             # --- Dissonance Detection ---
             # If intuition and reasoning are far apart, penalize the result
             dissonance = abs(prior_confidence - conscious_signal)
-            if dissonance > 0.5:
-                penalty = 0.85 # 15% penalty for high cognitive dissonance
+            if dissonance > 0.6: # Increased threshold for penalty
+                penalty = 0.90 # Less severe penalty
                 confidence *= penalty
                 logger.warning(f"[ACR] High Cognitive Dissonance detected ({dissonance:.2f}). Penalizing confidence.")
         else:
@@ -176,6 +189,8 @@ class ConfidenceEngine:
         # Periodically adapt weights based on accuracy
         if len(self._accuracy_log) >= 20:
             self._adapt_weights()
+            
+        self._save_history()
     
     # ========================================
     # INTERNAL
@@ -190,6 +205,7 @@ class ConfidenceEngine:
             return 0.0
         
         best_ratio = 0.0
+        best_match = ""
         msg_lower = user_message.lower().strip()
         
         for record in self._recent_queries:
@@ -197,6 +213,14 @@ class ConfidenceEngine:
             ratio = self._similarity_ratio(msg_lower, past_msg)
             if ratio > best_ratio:
                 best_ratio = ratio
+                best_match = record["message"]
+        
+        if best_ratio > 0.1:
+            # Phase 21.6: Sample Size Penalty
+            # History is only reliable if we have multiple samples.
+            sample_penalty = min(len(self._recent_queries) / 5.0, 1.0)
+            best_ratio *= sample_penalty
+            logger.debug(f"[ACR] History Match: '{user_message[:30]}...' (samples={len(self._recent_queries)}) -> Score: {best_ratio:.2f}")
         
         return best_ratio
     
@@ -253,15 +277,39 @@ class ConfidenceEngine:
         if total_weight == 0 or active_count == 0:
             return 0.0
         
-        # Phase 21.0: Smarter coverage factor.
-        # Don't penalize too hard if only one signal is active (common for new queries).
-        # Phase 21.3: Adjusted for better human-like baseline.
-        coverage_map = {1: 0.85, 2: 0.95, 3: 1.0, 4: 1.0}
+        # Phase 21.6: Smarter coverage factor.
+        # Penalize hard if only one signal is active (common for new or poisoned queries).
+        # We need at least 2 signals for "Routine" confidence.
+        coverage_map = {1: 0.65, 2: 0.90, 3: 1.0, 4: 1.0}
         coverage_factor = coverage_map.get(active_count, 1.0)
         
         raw = math.exp(log_sum / total_weight)
         
         return raw * coverage_factor
+
+    def _load_history(self):
+        """Load historical queries from disk."""
+        try:
+            path = Path(self.history_file)
+            if path.exists():
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    # Convert list back to deque
+                    self._recent_queries = deque(data, maxlen=self.max_recent)
+                logger.debug(f"[ACR] Loaded {len(self._recent_queries)} history entries from disk.")
+        except Exception as e:
+            logger.warning(f"[ACR] Failed to load history: {e}")
+
+    def _save_history(self):
+        """Save historical queries to disk."""
+        try:
+            path = Path(self.history_file)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                # Convert deque to list for JSON serialization
+                json.dump(list(self._recent_queries), f)
+        except Exception as e:
+            logger.warning(f"[ACR] Failed to save history: {e}")
 
     
     def _adapt_weights(self):

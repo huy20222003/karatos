@@ -57,8 +57,15 @@ class HardwareEngine:
         """Detailed hardware report for Niva's logs."""
         return {
             "cores": os.cpu_count(),
+            "platform": HardwareEngine.get_platform(),
             "target_utility": "manual (settings.model_threads)",
             "recommended_threads": HardwareEngine.get_optimal_threads(),
             "optimized_context": HardwareEngine.get_optimal_context_size(),
             "query_batch_size": HardwareEngine.get_query_batch_size()
         }
+
+    @staticmethod
+    def get_platform() -> str:
+        """Detect the host operating system."""
+        import platform
+        return platform.system()

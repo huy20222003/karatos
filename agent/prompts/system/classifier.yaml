@@ -34,11 +34,15 @@ classifier: |
   ② If the message contains BOTH a command and a question → classify as **command**.
   ③ Social openers followed by a real request (e.g., "Hey, can you delete X?") → classify
      by the request, not the opener.
-  ④ When genuinely ambiguous between two categories → choose the one with higher operational impact.
+  ④ Questions about current time or date (e.g., "Mấy giờ?", "Ngày bao nhiêu?") → classify as **data**, because they require real-time system state retrieval.
+  ⑤ When genuinely ambiguous between two categories → choose the one with higher operational impact.
 
   ─────────────────────────────────────────────────────────
   USER MESSAGE: "{text}"
   ─────────────────────────────────────────────────────────
 
-  OUTPUT: A single category name only.
-  Valid values: question | command | social | data | general
+  OUTPUT: Return a JSON object ONLY.
+  Format: {"category": "...", "language": "..."}
+  Valid categories: question | command | social | data | general
+  Valid language codes: ISO 639-1 (e.g., 'en', 'vi', 'ja', 'fr', 'zh') or 'mixed'.
+  Base language decision on the entire text.

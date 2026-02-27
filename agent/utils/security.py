@@ -17,6 +17,11 @@ class SecurityShield:
     """
     Centralized security utility for sanitizing inputs and validating external resources.
     """
+    
+    @classmethod
+    def get_safe_commands(cls):
+        return cls.SAFE_COMMANDS
+
 
     # SSRF: Blocked Private IP Ranges
     BLOCKED_NETWORKS = [
@@ -226,19 +231,144 @@ class SecurityShield:
                 return {"safe": False, "reason": "Prompt injection (semantic)"}
         return {"safe": True}
 
-    # --- Phase 2: CLI Security (OpenClaw-style) ---
+    # --- Phase 2: CLI Security (Multi-OS) ---
+    # ═══════════════════════════════════════════════
+    # SAFE: Non-destructive, read-only, info-gathering
+    # These commands can run immediately without approval.
+    # ═══════════════════════════════════════════════
     SAFE_COMMANDS = [
-        "ls", "dir", "pwd", "date", "uptime", "whoami", 
-        "git status", "git branch", "git log -n 5",
-        "git add", "git commit", "git push", "git pull", "git checkout",
-        "python --version", "pip --version", "npm --version", "node --version",
-        "echo", "cat", "grep", "pnpm --version",
-        "mv", "move", "ren", "rename", "mkdir", "rmdir"
+        # ── Navigation & File Listing ──
+        "ls", "dir", "pwd", "cd", "tree", "find", "locate",
+        "which", "whereis", "where", "type",
+        # ── File Reading (non-destructive) ──
+        "cat", "head", "tail", "less", "more", "wc",
+        "file", "stat", "md5sum", "sha256sum",
+        "diff", "fc", "comp", "sort", "uniq", "cut",
+        "awk", "sed", "tr",
+        # ── File Operations (safe) ──
+        "echo", "touch", "mkdir", "cp", "copy", "xcopy",
+        "mv", "move", "ren", "rename",
+        # ── Text Search ──
+        "grep", "findstr", "rg", "ag",
+        # ── System Info (read-only) ──
+        "date", "uptime", "whoami", "id", "uname",
+        "hostname", "hostnamectl", "arch",
+        "df", "du", "free", "vmstat", "lscpu", "lsmem",
+        "env", "printenv", "set", "ver", "systeminfo",
+        "lsb_release", "sw_vers",
+        # ── Network Info (read-only) ──
+        "ping", "nslookup", "dig", "traceroute", "tracert",
+        "curl", "wget", "ifconfig", "ipconfig", "ip",
+        "netstat", "ss", "arp", "wmic", "net stats",
+        # ── Process Info (read-only) ──
+        "ps", "top", "htop", "tasklist", "lsof",
+        # ── Git ──
+        "git status", "git branch", "git log",
+        "git diff", "git show", "git stash list",
+        "git remote", "git tag", "git rev-parse",
+        "git add", "git commit", "git push", "git pull",
+        "git checkout", "git switch", "git merge",
+        "git fetch", "git clone", "git init",
+        "git stash", "git rebase", "git cherry-pick",
+        "git reset --soft", "git config",
+        # ── Dev Tools (version/info) ──
+        "python", "python3", "pip", "pip3",
+        "node", "npm", "npx", "yarn", "pnpm",
+        "cargo", "rustc", "go", "java", "javac",
+        "dotnet", "ruby", "gem", "php", "composer",
+        # ── Package Managers (info only) ──
+        "apt list", "apt show", "apt search",
+        "brew list", "brew info", "brew search",
+        "choco list", "choco search", "choco info",
+        "winget list", "winget search", "winget show",
+        "snap list", "snap info",
+        # ── Service Info (read-only) ──
+        "pm2 status", "pm2 list", "pm2 logs", "pm2 info",
+        "systemctl status", "systemctl list-units",
+        "service --status-all",
+        "sc query", "sc queryex",
+        # ── Docker (read-only) ──
+        "docker ps", "docker images", "docker logs",
+        "docker inspect", "docker stats", "docker info",
+        "docker-compose ps", "docker-compose logs",
+        # ── Disk & Storage (read-only) ──
+        "vol", "wmic diskdrive list", "wmic logicaldisk list",
+        "lsblk", "blkid", "fdisk -l",
+        "mount",
     ]
-    
-    DANGEROUS_COMMANDS = [
-        "rm", "del", "format", "kill", "sudo", "shutdown", "reboot", 
-        "mkfs", "dd", "chmod", "chown", "passwd", "root", ">", ">>", "|"
+
+    # ═══════════════════════════════════════════════
+    # BLOCKED: Absolutely forbidden — no approval possible.
+    # System-level commands that can cause irreversible damage.
+    # ═══════════════════════════════════════════════
+    BLOCKED_COMMANDS = [
+        # ── Privilege Escalation ──
+        "sudo", "su", "runas", "doas", "pkexec",
+        # ── Disk/Partition Destruction ──
+        "format", "mkfs", "dd", "fdisk", "parted", "diskpart",
+        "cipher", "bcdedit",
+        # ── System Boot/Power ──
+        "shutdown", "reboot", "poweroff", "halt", "init",
+        "telinit",
+        # ── Permission/Ownership (system-level) ──
+        "chmod", "chown", "chgrp", "chroot",
+        "takeown", "icacls", "cacls",
+        # ── User/Password Management ──
+        "passwd", "useradd", "userdel", "usermod",
+        "groupadd", "groupdel", "adduser", "deluser",
+        "net user", "net localgroup",
+        # ── Firewall/Network Security ──
+        "iptables", "ip6tables", "nftables", "ufw",
+        "netsh advfirewall", "netsh firewall",
+        # ── System Integrity ──
+        "sfc", "dism", "bcdboot",
+        "insmod", "rmmod", "modprobe",
+        # ── Registry (Windows) ──
+        "reg add", "reg delete", "regedit",
+        # ── Dangerous Filesystem ──
+        "shred", "wipe", "srm",
+        "fsck", "e2fsck", "xfs_repair",
+    ]
+
+    # ═══════════════════════════════════════════════
+    # UNSAFE: Dangerous but CAN be approved by admin.
+    # These trigger a Telegram notification for manual approval.
+    # ═══════════════════════════════════════════════
+    UNSAFE_COMMANDS = [
+        # ── File/Directory Deletion ──
+        "rm", "del", "erase", "rmdir", "rd",
+        "unlink", "trash",
+        # ── Process Control ──
+        "kill", "killall", "pkill", "taskkill",
+        "xkill",
+        # ── Service Control ──
+        "systemctl stop", "systemctl restart", "systemctl disable",
+        "systemctl enable", "systemctl start",
+        "service stop", "service restart", "service start",
+        "sc stop", "sc start", "sc delete", "sc config",
+        "pm2 stop", "pm2 delete", "pm2 restart", "pm2 reload",
+        # ── Package Install/Remove ──
+        "apt install", "apt remove", "apt purge", "apt upgrade",
+        "brew install", "brew uninstall", "brew upgrade",
+        "choco install", "choco uninstall", "choco upgrade",
+        "winget install", "winget uninstall", "winget upgrade",
+        "pip install", "pip uninstall", "pip3 install", "pip3 uninstall",
+        "npm install", "npm uninstall", "npm update",
+        "yarn add", "yarn remove",
+        "pnpm add", "pnpm remove",
+        "snap install", "snap remove",
+        "cargo install", "cargo uninstall",
+        # ── Docker Mutations ──
+        "docker run", "docker stop", "docker rm", "docker rmi",
+        "docker exec", "docker build", "docker pull",
+        "docker-compose up", "docker-compose down",
+        "docker-compose restart", "docker system prune",
+        # ── Git Destructive ──
+        "git reset --hard", "git clean", "git push --force",
+        # ── Cron/Scheduled Tasks ──
+        "crontab", "at", "schtasks",
+        # ── Output Redirection (can overwrite files) ──
+        ">", ">>",
     ]
 
     @staticmethod
@@ -246,6 +376,15 @@ class SecurityShield:
         """
         Validate a CLI command against security policies.
         Returns: {"status": "safe" | "unsafe" | "blocked", "reason": str}
+        
+        Priority order (first match wins):
+        1. Hard-coded forbidden patterns (piping, chaining, elevation)
+        2. BLOCKED_COMMANDS (absolutely forbidden)
+        3. UNSAFE_COMMANDS (requires admin approval) — checked BEFORE safe list
+        4. Path-based security (system directories)
+        5. SAFE_COMMANDS (allowed immediately)
+        6. Info-gathering flags (--help, --version)
+        7. Default → unsafe (requires approval)
         """
         if not command:
             return {"status": "blocked", "reason": "Empty command."}
@@ -253,32 +392,42 @@ class SecurityShield:
         cmd_lower = command.lower().strip()
         cmd_base = cmd_lower.split()[0] if cmd_lower.split() else ""
 
-        # 1. Block Hard-coded Dangerous Patterns (Piping, Redirection, Sudo)
-        if any(p in cmd_lower for p in ["sudo", ">", ">>", "|", "&", ";", "`", "$("]):
-             return {"status": "blocked", "reason": "Command contains forbidden execution patterns (piping, redirection, or elevation)."}
+        # 1. Block Hard-coded Dangerous Patterns (Elevation / Execution clusters)
+        if any(p in cmd_lower for p in ["sudo ", "| ", "&", ";", "`", "$("]):
+             return {"status": "blocked", "reason": "Command contains forbidden execution patterns (piping, elevation, or command chaining)."}
 
-        # 2. Check against Denylist
-        if any(p in cmd_base for p in SecurityShield.DANGEROUS_PATTERNS) or any(p in cmd_base for p in SecurityShield.DANGEROUS_COMMANDS):
-             return {"status": "blocked", "reason": f"Command '{cmd_base}' is explicitly blocked for security reasons."}
+        # 2. Check against Blocked Commands (absolutely forbidden)
+        # Supports both single-word ("format") and multi-word ("reg delete") matching
+        if any(p in cmd_base for p in SecurityShield.DANGEROUS_PATTERNS):
+             return {"status": "blocked", "reason": f"Command '{cmd_base}' matches a dangerous code pattern and is blocked."}
+        if any(cmd_lower.startswith(b) or cmd_base == b for b in SecurityShield.BLOCKED_COMMANDS):
+             matched = next((b for b in SecurityShield.BLOCKED_COMMANDS if cmd_lower.startswith(b) or cmd_base == b), cmd_base)
+             return {"status": "blocked", "reason": f"Command '{matched}' is absolutely blocked for security reasons."}
 
-        # 3. Path-based Security (Phase 23)
-        # Check if the command contains any blocked system paths BEFORE checking allowlist
+        # 3. Check against Unsafe Commands BEFORE safe list
+        # This ensures "git reset --hard" is caught as unsafe before "git reset" matches safe "git"
+        # Longer matches are checked first to avoid false positives
+        sorted_unsafe = sorted(SecurityShield.UNSAFE_COMMANDS, key=len, reverse=True)
+        for u in sorted_unsafe:
+            if cmd_lower.startswith(u) or cmd_base == u:
+                return {"status": "unsafe", "reason": f"Command '{u}' is potentially destructive and requires manual approval from the administrator."}
+
+        # 4. Path-based Security
         path_report = SecurityShield.validate_path_safety(cmd_lower)
         if not path_report["safe"]:
              return {"status": "blocked", "reason": path_report["reason"]}
 
-        # 4. Check against Allowlist
-        if any(cmd_lower.startswith(safe) for safe in SecurityShield.SAFE_COMMANDS):
-             return {"status": "safe", "reason": "Command is in the verified allowlist."}
+        # 5. Check against Allowlist (longest match first for accuracy)
+        sorted_safe = sorted(SecurityShield.SAFE_COMMANDS, key=len, reverse=True)
+        for s in sorted_safe:
+            if cmd_lower.startswith(s):
+                return {"status": "safe", "reason": "Command is in the verified allowlist."}
 
-        # 5. Special Case: Allow Safe Info-gathering Flags (Learning Mode)
-        # Allows commands like 'anytool --help' or 'anytool --version' to enable self-learning
+        # 6. Special Case: Allow Safe Info-gathering Flags (Learning Mode)
         if any(f in cmd_lower for f in ["--help", "-h", "--version", "-v"]):
-             # Ensure it's not a complex command (no spaces or unusual patterns after flag)
-             # and the base command isn't in dangerous list
              return {"status": "safe", "reason": "Permitted info-gathering flag for self-learning flow."}
 
-        # 6. Default to Unsafe (Requires Approval)
+        # 7. Default to Unsafe (Requires Approval)
         return {"status": "unsafe", "reason": "Command is not in the allowlist and requires manual approval from the administrator."}
 
     @staticmethod
@@ -300,7 +449,7 @@ class SecurityShield:
         if ext in SecurityShield.SOURCE_CODE_EXTENSIONS:
             # We check if it's within the agent's logic directories
             # (Essentially anything that isn't data/logs/temp)
-            excluded_dirs = ["logs", "tmp", "data", "storage", ".gemini", "node_modules"]
+            excluded_dirs = ["logs", "tmp", "data", "storage", ".gemini", "node_modules", "definitions"]
             if not any(f"\\{d}\\" in path_lower or f"/{d}/" in path_lower for d in excluded_dirs):
                 return True
                 

@@ -1,0 +1,41 @@
+# ============================================================
+# SHELL COMMAND INTELLIGENCE — Auto-Recovery & Correction
+# ============================================================
+
+cli_correction_instruction: |
+  ╔══════════════════════════════════════════════════════════╗
+  ║     SHELL COMMAND REPAIR — Auto-Recovery Engine         ║
+  ╚══════════════════════════════════════════════════════════╝
+  Authority : System-level command correction.
+  OS        : {os_name}
+
+  ─────────────────────────────────────────────────────────
+  FAILED COMMAND:
+  {failed_command}
+
+  EXIT CODE: {exit_code}
+
+  ERROR OUTPUT:
+  {error_output}
+  ─────────────────────────────────────────────────────────
+
+  DIAGNOSTIC PROTOCOL:
+  ① ANALYZE: Map the error message to the specific syntax issue.
+  ② DIAGNOSE using these common patterns:
+     ● "The syntax of the command is incorrect"
+       → Check for OS-specific syntax rules.
+       → On Windows: `ren` second argument must be filename ONLY, not a full path.
+         WRONG : ren "C:\path\old.txt" "C:\path\new.txt"
+         RIGHT : ren "C:\path\old.txt" "new.txt"
+       → On Windows: Use `move` instead of `mv`, `copy` instead of `cp`.
+     ● "is not recognized as an internal or external command"
+       → The command may be Linux-only. Find the Windows equivalent.
+     ● "Access is denied"
+       → May need elevated privileges or the file is locked.
+     ● "The system cannot find the file specified"
+       → Verify the path exists. Check for typos or missing quotes around paths with spaces.
+  ③ REBUILD: Construct the corrected command with proper syntax for {os_name}.
+  ④ VERIFY: Mentally simulate the corrected command before outputting.
+
+  OUTPUT: The corrected command ONLY. Raw command string.
+  No markdown. No explanation. No code blocks. Just the command.

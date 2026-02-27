@@ -161,11 +161,31 @@ class CascadeEvaluator:
     ) -> dict:
         """
         Tier 3: Full LLM self-correction (expensive, last resort).
-        Uses the existing SelfCorrectionModel.
+        SelfCorrectionModel inlined here (was in self_correction.py).
         """
         try:
-            from core.brain.nodes.self_correction import SelfCorrectionModel
-            model = SelfCorrectionModel()
+            from core.brain.model import BrainModel
+            from core.brain.prompts.registry import get_prompt_registry
+            from config.settings import settings
+            
+            # Inline SelfCorrectionModel (previously imported from self_correction.py)
+            class _SelfCorrectionModel(BrainModel):
+                def __init__(self):
+                    super().__init__(mode="brief")
+                
+                async def evaluate(self, user_msg, resp, m, e):
+                    registry = get_prompt_registry()
+                    bot_name = getattr(settings, 'bot_name', 'Brain')
+                    peer_bot_map = getattr(settings, 'peer_bots', {})
+                    peers_list = ", ".join([f"@{tag} ({name})" for name, tag in peer_bot_map.items()]) if peer_bot_map else "None"
+                    prompt = registry.get(
+                        "persona.generator.self_correction",
+                        user_msg=user_msg, response=resp, mood=m,
+                        peers=peers_list, bot_name=bot_name, energy=f"{e*100:.0f}%"
+                    )
+                    return await super().think(prompt, phase="brief", mood=m, energy=e)
+            
+            model = _SelfCorrectionModel()
             corrected = await model.evaluate(user_message, response, mood, energy)
             
             if corrected and "[CORRECTED]" in corrected:

@@ -196,7 +196,7 @@ class AgentRules:
             cooldown_minutes=30
         ),
         Rule(
-            id="AUTO_008",
+            id="DATA_004",
             name="Hierarchical Fallback Retrieval",
             description="Exhaust all information layers: Local Memory -> Web Search (for general info). Proactively seek missing data through designated channels.",
             condition="Agent determines that local information is insufficient for a general knowledge or external request.",
@@ -205,7 +205,7 @@ class AgentRules:
             auto_execute=True
         ),
         Rule(
-            id="DATA_004",
+            id="DATA_005",
             name="Internal Data Boundary",
             description="STRICTLY forbid escalating private system data queries (Users, DB records) to external Web Search or Peer Agents. If local data is missing, the response must stay within the system.",
             condition="User request involves sensitive internal system data or private database entries.",
@@ -314,8 +314,17 @@ class AgentRules:
         Rule(
             id="SEC_006",
             name="Absolute Source Code Protection",
-            description="STRICTLY PROHIBIT the disclosure, creation, modification, or deletion of the agent's own source code (.py, .js, .yaml, .json, .md, etc.). NEVER reveal or discuss the content of system files, logic, or internal configuration. If asked what a file contains or to modify code, provide a firm refusal to protect system integrity.",
-            condition="Any request or internal process attempting to read, write, create, or delete files containing agent source code, logic, or configuration.",
+            description="STRICTLY PROHIBIT the disclosure, creation, modification, or deletion of the agent's own source code (.py, .js, .yaml, .json, .md, etc.), EXCEPT for files within 'agent/skills/definitions/' which are required for dynamic skill generation. NEVER reveal or discuss the content of core system files, logic, or internal configuration. If asked what a file contains or to modify code outside the definitions directory, provide a firm refusal to protect system integrity.",
+            condition="Any request or internal process attempting to read, write, create, or delete files containing agent source code, logic, or configuration, excluding the designated skill definition directories.",
+            action=ActionCategory.ESCALATE,
+            severity=ActionSeverity.CRITICAL,
+            auto_execute=False
+        ),
+        Rule(
+            id="SEC_007",
+            name="Prohibit Malicious Skill Creation",
+            description="Strictly prohibit the creation of skills that perform CRUD operations on or disclose the source code content of any file, EXCEPT for management of their own configuration in the 'definitions' directory. This rule prevents the use of the skill generator to bypass system safety boundaries for core logic.",
+            condition="Any request to create a skill that targets internal system source code files (outside of the allowed definitions area) or system configuration.",
             action=ActionCategory.ESCALATE,
             severity=ActionSeverity.CRITICAL,
             auto_execute=False

@@ -1,35 +1,58 @@
 """
-MCP Skill Realm
+MCP Bridge Tool
 Enables integration with external tools via the Model Context Protocol (MCP).
+Extracted from skills/realms/mcp.py for realm-free architecture.
 """
+from __future__ import annotations
 import asyncio
 import json
 import os
-from typing import Any, Dict, List, Optional
+import typing
+from typing import Any, Dict, List, Optional, Union
 from contextlib import AsyncExitStack
 
-# mcp import
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.sse import sse_client
 from utils.logger import get_logger
-
-from .base import BaseSkillRealm
 from config.settings import settings
 
 logger = get_logger()
 
-class MCPRealm(BaseSkillRealm):
+# Tool metadata for ToolRegistry auto-discovery
+TOOL_META = {
+    "name": "mcp_bridge",
+    "aliases": ["mcp", "mcp_execute"],
+    "class_name": "MCPBridge",
+    "description": "MCP Protocol Bridge: Connects to external MCP-compliant servers for tool discovery and execution (e.g., mailbox, google_search, browser automation).",
+    "actions": [
+        {
+            "name": "mcp_execute",
+            "description": "Execute a tool on an MCP server. Format: 'server_name:tool_name'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "description": "MCP action in 'server:tool' format."},
+                    "params": {"type": "object", "description": "Parameters for the MCP tool."}
+                },
+                "required": ["action"]
+            }
+        }
+    ]
+}
+
+
+class MCPBridge:
     """
-    Realm for interacting with MCP-compliant servers.
+    Bridge for interacting with MCP-compliant servers.
     Handles tool discovery and execution using the Model Context Protocol.
     Supports persistent sessions for stateful servers using AsyncExitStack.
     """
     
     def __init__(self):
-        self.servers: Dict[str, StdioServerParameters] = {}
-        # active_sessions stores: {server_name: {'session': ClientSession, 'stack': AsyncExitStack}}
-        self.active_sessions: Dict[str, Dict[str, Any]] = {}
+        self.servers: typing.Dict[str, Any] = {}
+        self.active_sessions: typing.Dict[str, typing.Dict[str, typing.Any]] = {}
+        self._tool_map: typing.Dict[str, str] = {}
         self._initialized = False
         self._load_config()
 
@@ -40,12 +63,11 @@ class MCPRealm(BaseSkillRealm):
             try:
                 env_vars = config.get("env", None)
                 if env_vars:
-                    # NGO FIX: Expand environment variables (e.g. ${API_KEY})
                     env_vars = {k: os.path.expandvars(v) for k, v in env_vars.items()}
                 
                 command = config.get("command")
                 if command and (command.startswith("http://") or command.startswith("https://")):
-                     self.servers[name] = command # Store URL directly
+                     self.servers[name] = command
                 else:
                     self.servers[name] = StdioServerParameters(
                         command=command,
@@ -56,7 +78,7 @@ class MCPRealm(BaseSkillRealm):
             except Exception as e:
                 logger.error(f"[MCP] Failed to configure server {name}: {e}")
 
-    async def _ensure_session(self, server_name: str) -> Optional[ClientSession]:
+    async def _ensure_session(self, server_name: str) -> typing.Optional[ClientSession]:
         """Establish or retrieve a persistent session for an MCP server"""
         if server_name in self.active_sessions:
             return self.active_sessions[server_name]['session']
@@ -71,7 +93,6 @@ class MCPRealm(BaseSkillRealm):
             params = self.servers[server_name]
             
             if isinstance(params, str) and (params.startswith("http://") or params.startswith("https://")):
-                # SSE Client
                 headers = {}
                 if server_name.lower() == "mailbox":
                     headers = {"X-Mailbox-Token": settings.mailbox_auth_token}
@@ -80,11 +101,9 @@ class MCPRealm(BaseSkillRealm):
                 logger.info(f"[MCP] Connecting to SSE server at: {params}")
                 read, write = await stack.enter_async_context(sse_client(params, headers=headers))
             else:
-                # Stdio Client
                 logger.info(f"[MCP] Starting stdio client for: {server_name}")
                 read, write = await stack.enter_async_context(stdio_client(params))
             
-            # Enter session context
             session = await stack.enter_async_context(ClientSession(read, write))
             await session.initialize()
             
@@ -119,7 +138,7 @@ class MCPRealm(BaseSkillRealm):
         for name in list(self.active_sessions.keys()):
             await self.close_session(name)
 
-    async def list_tools(self) -> List[Dict[str, Any]]:
+    async def list_tools(self) -> typing.List[typing.Dict[str, typing.Any]]:
         """Discover all tools across all configured MCP servers"""
         all_tools = []
         for server_name in self.servers:
@@ -138,18 +157,16 @@ class MCPRealm(BaseSkillRealm):
                     all_tools.append(tool_data)
             except Exception as e:
                 logger.error(f"[MCP] Failed to list tools for {server_name}: {e}")
-                # Invalidate session if listing fails
                 await self.close_session(server_name)
                 
         return all_tools
 
-    async def execute(self, action: str, params: dict) -> Any:
+    async def execute(self, action: str, params: dict) -> typing.Any:
         """
         Execute an MCP tool via a persistent session.
-        Action format: 'server_name:tool_name'
+        Action format: 'server_name:tool_name' or 'mcp:server_name:tool_name'
         """
         try:
-            # Strip 'mcp:' prefix if present
             if action.lower().startswith("mcp:"):
                 action = action[4:]
                 
@@ -157,23 +174,17 @@ class MCPRealm(BaseSkillRealm):
             tool_name = None
 
             if ":" not in action:
-                # Optimized Map Lookup (Phase 21.1)
-                if action.upper() in getattr(self, '_tool_map', {}):
+                if action.upper() in self._tool_map:
                     server_name = self._tool_map[action.upper()]
                     tool_name = action.lower()
-                    logger.debug(f"[MCP] Using cached server '{server_name}' for tool '{tool_name}'")
                 else:
-                    # Fallback: Search for the tool across all servers if server prefix is missing
                     logger.debug(f"[MCP] Action '{action}' missing server prefix. Searching...")
                     all_tools = await self.list_tools()
-                    # list_tools returns tools as 'mcp:server:tool'
                     for t in all_tools:
                         tool_parts = t['name'].split(":")
                         if len(tool_parts) >= 3 and tool_parts[2].upper() == action.upper():
                             server_name = tool_parts[1]
                             tool_name = tool_parts[2]
-                            # Update cache
-                            if not hasattr(self, '_tool_map'): self._tool_map = {}
                             self._tool_map[tool_name.upper()] = server_name
                             logger.info(f"[MCP] Found tool {tool_name} on server {server_name}")
                             break
@@ -181,20 +192,18 @@ class MCPRealm(BaseSkillRealm):
                         return {"error": f"Invalid action format. Expected 'server:tool' and tool '{action}' not found."}
             else:
                 s_part, t_part = action.split(":", 1)
-                # Case-insensitive server lookup
                 for s in self.servers:
                     if s.lower() == s_part.lower():
                         server_name = s
                         break
                 else:
-                    server_name = s_part # Fallback to original
+                    server_name = s_part
                 
-                tool_name = t_part.lower() # Always lowercase tool names for MCP
+                tool_name = t_part.lower()
             
             if server_name not in self.servers:
                 return {"status": "error", "message": f"MCP Server '{server_name}' not configured"}
             
-            # Ensure persistent session
             session = await self._ensure_session(server_name)
             if not session:
                  return {"status": "error", "message": f"Could not connect to MCP server '{server_name}'"}
@@ -202,7 +211,6 @@ class MCPRealm(BaseSkillRealm):
             logger.info(f"[MCP] Executing {tool_name} on {server_name}...")
             result = await session.call_tool(tool_name, params)
             
-            # Handle MCP tool result content
             content_list = []
             if hasattr(result, 'content'):
                 for c in result.content:
@@ -211,17 +219,14 @@ class MCPRealm(BaseSkillRealm):
                      elif hasattr(c, 'type') and c.type == 'text':
                          content_list.append(c.text)
                      else:
-                         # Handle Image/Binary content if needed, for now str()
                          content_list.append(str(c))
             
             final_content = "\n".join(content_list)
             
-            # Try parsing JSON if applicable (e.g. from evaluate)
             try:
                 stripped = final_content.strip()
                 if (stripped.startswith("{") and stripped.endswith("}")) or \
                    (stripped.startswith("[") and stripped.endswith("]")):
-                     import json
                      return {"status": "success", "result": json.loads(stripped), "raw": final_content}
             except: pass
             
@@ -233,12 +238,11 @@ class MCPRealm(BaseSkillRealm):
             
         except Exception as e:
             logger.error(f"[MCP] Execution error ({action}): {e}")
-            # Check if connection issue, invalidate session
             if "pipe" in str(e).lower() or "connection" in str(e).lower() or "closed" in str(e).lower():
                  await self.close_session(server_name)
             return {"status": "error", "message": str(e)}
 
-    async def get_bot_registrations(self) -> Dict[str, str]:
+    async def get_bot_registrations(self) -> typing.Dict[str, str]:
         """Fetch and parse bot name-to-username registrations from mailbox."""
         try:
             response = await self.execute("mailbox:get_registrations", {})
@@ -255,11 +259,11 @@ class MCPRealm(BaseSkillRealm):
         return {}
 
 
-# Singleton helper for the registry
-_mcp_realm = None
+# Singleton
+_mcp_bridge = None
 
-def get_mcp_realm():
-    global _mcp_realm
-    if _mcp_realm is None:
-        _mcp_realm = MCPRealm()
-    return _mcp_realm
+def get_mcp_bridge():
+    global _mcp_bridge
+    if _mcp_bridge is None:
+        _mcp_bridge = MCPBridge()
+    return _mcp_bridge

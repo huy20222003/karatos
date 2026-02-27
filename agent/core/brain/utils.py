@@ -167,6 +167,12 @@ def parse_tool_call_robust(tool_calls: any, tool_name: str, base_confidence: flo
                     if args_key in parsed_json and isinstance(parsed_json[args_key], dict):
                         return parsed_json[args_key]
                 return parsed_json
+            
+            # NGO FIX: If it's a valid list, it's likely a plan. Return it wrapped for create_plan if needed.
+            if isinstance(parsed_json, list):
+                if tool_name == "create_plan":
+                    return {"steps": parsed_json}
+                return {"list": parsed_json}
         except:
             pass
             
@@ -176,7 +182,9 @@ def parse_tool_call_robust(tool_calls: any, tool_name: str, base_confidence: flo
         
         # --- AUTO-PLAN WRAPPING ---
         if tool_name == "create_plan":
-            if "SELECT" in code_content.upper() or "WITH" in code_content.upper():
+            if any(cmd in code_content.lower() for cmd in ["echo", "touch", "mkdir", "rm", "mv", "ls", "dir", "cat"]):
+                 return {"steps": [{"thought": "Auto-wrapped from raw Shell response", "task": "execute", "params": {"command": code_content}, "confidence": base_confidence}]}
+            if "SELECT" in code_content.upper() or "WITH" in code_content.upper() or "INSERT " in code_content.upper():
                 return {"steps": [{"thought": "Auto-wrapped from raw SQL response", "task": "dynamic_db", "params": {"query": code_content}, "confidence": base_confidence}]}
             if "print(" in code_content or "import " in code_content:
                  return {"steps": [{"thought": "Auto-wrapped from raw Python response", "task": "skill_generator", "params": {"skill_name": "adhoc_task", "description": "Auto-generated from planner output", "code": code_content}, "confidence": base_confidence}]}

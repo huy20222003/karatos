@@ -31,7 +31,7 @@ class EmbeddingEngine:
     def get_instance(cls):
         if cls._instance is None:
             cls._instance = EmbeddingEngine.__new__(cls)
-            cls._instance.model_name = "nomic-embed-text"
+            cls._instance.model_name = settings.ollama_embedding_model_name
             try:
                 pass
                 cls._embeddings = OllamaEmbeddings(
@@ -73,13 +73,9 @@ class EmbeddingEngine:
                     timeout=current_timeout
                 )
                 
-                t_end = time.time()
-                if attempt > 0:
-                    logger.info(f"[EMBEDDING] Success on retry {attempt} (took {t_end-t_start:.2f}s)")
                 return vector
                 
             except asyncio.TimeoutError:
-                logger.warning(f"[EMBEDDING] Attempt {attempt+1}/{max_retries} timed out ({current_timeout}s) for: {text[:40]}...")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(1.0 * (attempt + 1)) # Small delay before retry
                 else:
@@ -115,13 +111,9 @@ class EmbeddingEngine:
                     timeout=current_timeout
                 )
                 
-                t_end = time.time()
-                if attempt > 0:
-                    logger.info(f"[EMBEDDING] Batch success on retry {attempt} (took {t_end-t_start:.2f}s)")
                 return vectors
                 
             except asyncio.TimeoutError:
-                logger.warning(f"[EMBEDDING] Batch attempt {attempt+1}/{max_retries} timed out ({current_timeout}s) for {len(texts)} texts.")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2.0 * (attempt + 1))
                 else:
@@ -138,13 +130,11 @@ class EmbeddingEngine:
         """Pre-warm the embedding model by sending a small request"""
         if not self.embeddings:
             return
-        logger.info(f"[EMBEDDING] Pre-warming model '{self.model_name}'...")
         try:
             # Short pulse to trigger Ollama load
             await self.get_embedding("warmup")
-            logger.info("[EMBEDDING] Model is warm and ready.")
         except Exception as e:
-            logger.warning(f"[EMBEDDING] Warmup failed: {e}")
+            pass
 
 # Singleton instance
 _engine = None

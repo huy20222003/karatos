@@ -18,14 +18,23 @@ class MemoryDistiller(BrainModel):
 
     async def distill_interaction(self, user_text: str, agent_response: str) -> List[Dict[str, Any]]:
         """
-        Distills a single interaction into multiple memory units.
+        Analyze a chat interaction and extract atomic memory units.
         Returns a list of distilled facts/sentiments/reflections.
         """
-        # Note: BrainModel.think will use system.distiller.prompt
-        prompt = f"User: \"{user_text}\"\nAssistant: \"{agent_response}\""
+        interaction_str = f"User: \"{user_text}\"\nAssistant: \"{agent_response}\""
+        
+        # --- NGO FIX: Explicit extraction command to break chat bias ---
+        command = "EXTRACT MEMORY UNITS FROM THE ABOVE INTERACTION INTO A JSON LIST. RETURN ONLY JSON."
         
         try:
-            raw_response = await self.think(prompt, mood="NEUTRAL", timeout=180.0)
+            # Note: BrainModel.think now passes interaction_str into {interaction_str} in distiller.yaml
+            raw_response = await self.think(
+                command, 
+                phase="distiller", 
+                interaction_str=interaction_str, 
+                mood="ANALYTICAL", 
+                timeout=180.0
+            )
             
             if raw_response in ["ERROR_TIMEOUT", "ERROR_FAILED"]:
                 logger.error(f"[DISTILLER] Brain think failed: {raw_response}")
@@ -47,19 +56,27 @@ class MemoryDistiller(BrainModel):
         """
         Specially distills an autonomous task result into EXPERIENCE or REFLECTION.
         """
-        prompt = f"""
-        Analyze the outcome of an autonomous task.
-        Extract lessons and experiences.
-
-        TASK: {task_description}
-        OUTCOME: {outcome}
-        ERRORS/LOGS: {errors if errors else "None"}
-
-        Output STRICTLY a JSON list of objects: [{{"category": "EXPERIENCE" or "REFLECTION", "content": "...", "importance": 0.8-1.0}}]
-        """
+        # --- NGO FIX: Use Prompt Registry for Reflection ---
+        from core.brain.prompts.registry import get_prompt_registry
+        registry = get_prompt_registry()
+        
+        # We pass context directly to avoid identity injection conflicts if needed
+        # but here we follow the standard get_system_prompt pattern
+        prompt_content = f"EXTRACT EXPERIENCE MEMORY UNITS FROM THE FOLLOWING TASK:\nTask: {task_description}\nOutcome: {outcome}\nReturn ONLY JSON."
+        
         try:
             logger.info(f"[DISTILLER] Distilling reflection for task: {task_description[:50]}...")
-            raw_response = await self.think(prompt, mood="ANALYTICAL", timeout=180.0)
+            
+            # Using specific phase for reflection
+            raw_response = await self.think(
+                prompt_content, 
+                phase="distiller_reflection", 
+                task_description=task_description,
+                outcome=outcome,
+                errors=errors or "None",
+                mood="ANALYTICAL", 
+                timeout=180.0
+            )
             
             if raw_response in ["ERROR_TIMEOUT", "ERROR_FAILED"]:
                 return []
@@ -73,3 +90,139 @@ class MemoryDistiller(BrainModel):
         except Exception as e:
             logger.error(f"[DISTILLER] Reflection distillation failed: {e}")
             return []
+
+    async def reconcile_persona(self, memory_units: List[str]) -> Dict[str, Any]:
+        """
+        Neural Identity Reconciliation.
+        Synthesizes multiple persona-related memory units into a coherent identity.
+        """
+        units_str = "\n".join([f"- {u}" for u in memory_units])
+        
+        # Note: Using persona_reconciler prompt key
+        from core.brain.prompts.registry import get_prompt_registry
+        p_registry = get_prompt_registry()
+        prompt = p_registry.get("system.distiller.persona_reconciler", memory_units=units_str)
+
+        try:
+            logger.info(f"[DISTILLER] Reconciling persona from {len(memory_units)} units...")
+            raw_response = await self.think(prompt, mood="ANALYTICAL", timeout=60.0)
+            
+            if raw_response in ["ERROR_TIMEOUT", "ERROR_FAILED"]:
+                return {}
+
+            from core.brain.utils import extract_json
+            identity = extract_json(raw_response)
+            return identity if isinstance(identity, dict) else {}
+        except Exception as e:
+            logger.error(f"[DISTILLER] Persona reconciliation failed: {e}")
+            return {}
+
+    async def consolidate_memories(self, memories: List[Dict[str, Any]], topic: str = "") -> List[Dict[str, Any]]:
+        """
+        Progressive Summarization — Layer 2: Merge related memories into consolidated highlights.
+        Groups by category, then uses LLM to merge overlapping facts into fewer, richer entries.
+        """
+        if len(memories) < 3:
+            return memories  # Not enough to consolidate
+        
+        # Group memories by category
+        groups: Dict[str, List[str]] = {}
+        for m in memories:
+            cat = m.get("category", "CONTEXT")
+            val = str(m.get("value", m.get("key", "")))
+            if cat not in groups:
+                groups[cat] = []
+            groups[cat].append(val)
+        
+        consolidated = []
+        for category, items in groups.items():
+            if len(items) < 2:
+                # Single item, keep as-is
+                consolidated.append({"category": category, "value": items[0], "importance": 0.7})
+                continue
+            
+            items_str = "\n".join([f"- {item}" for item in items[:20]])  # Cap at 20
+            
+            prompt = f"""You are a knowledge consolidation engine. Merge these related facts into fewer, richer statements.
+
+CATEGORY: {category}
+TOPIC: {topic or "General"}
+
+FACTS TO MERGE:
+{items_str}
+
+RULES:
+1. Merge overlapping/similar facts into single comprehensive statements
+2. Preserve ALL unique information — do not discard distinct facts
+3. Reduce total count by at least 40%
+4. Each merged fact should be a complete, standalone statement
+5. Rate importance 0.0-1.0 (how critical this knowledge is)
+
+Return JSON list:
+```json
+[{{"value": "merged fact statement", "importance": 0.8}}, ...]
+```"""
+            
+            try:
+                raw = await self.think(prompt, mood="ANALYTICAL", timeout=120.0)
+                if raw in ["ERROR_TIMEOUT", "ERROR_FAILED"]:
+                    consolidated.extend([{"category": category, "value": v, "importance": 0.5} for v in items])
+                    continue
+                
+                from core.brain.utils import extract_json
+                merged = extract_json(raw)
+                if merged and isinstance(merged, list):
+                    for m in merged:
+                        m["category"] = category
+                    consolidated.extend(merged)
+                    logger.info(f"[DISTILLER] Consolidated {len(items)} → {len(merged)} facts in {category}")
+                else:
+                    consolidated.extend([{"category": category, "value": v, "importance": 0.5} for v in items])
+            except Exception as e:
+                logger.error(f"[DISTILLER] Consolidation failed for {category}: {e}")
+                consolidated.extend([{"category": category, "value": v, "importance": 0.5} for v in items])
+        
+        return consolidated
+
+    async def extract_essence(self, memories: List[Dict[str, Any]], max_beliefs: int = 10) -> List[Dict[str, Any]]:
+        """
+        Progressive Summarization — Layer 3: Ultra-compress to core beliefs.
+        One sentence per topic — the agent's most fundamental knowledge.
+        """
+        if not memories:
+            return []
+        
+        facts_str = "\n".join([f"- [{m.get('category', '?')}] {m.get('value', m.get('key', ''))}" for m in memories[:50]])
+        
+        prompt = f"""You are a cognitive essence extractor. Distill these facts into the absolute core beliefs — the fundamental truths that should persist permanently.
+
+FACTS:
+{facts_str}
+
+RULES:
+1. Maximum {max_beliefs} core beliefs
+2. Each belief = ONE clear, definitive sentence
+3. Prioritize: identity > relationships > goals > learned patterns > transient facts
+4. Discard anything ephemeral or task-specific
+5. Rate importance 0.5-1.0
+
+Return JSON:
+```json
+[{{"belief": "core statement", "category": "CATEGORY", "importance": 0.9}}, ...]
+```"""
+        
+        try:
+            raw = await self.think(prompt, mood="ANALYTICAL", timeout=60.0)
+            if raw in ["ERROR_TIMEOUT", "ERROR_FAILED"]:
+                return []
+            
+            from core.brain.utils import extract_json
+            beliefs = extract_json(raw)
+            if beliefs and isinstance(beliefs, list):
+                logger.info(f"[DISTILLER] Extracted {len(beliefs)} core beliefs from {len(memories)} memories.")
+                return beliefs
+            return []
+        except Exception as e:
+            logger.error(f"[DISTILLER] Essence extraction failed: {e}")
+            return []
+

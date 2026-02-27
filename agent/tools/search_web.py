@@ -9,6 +9,41 @@ logger = get_logger()
 # Simple query cache to avoid redundant hits in the same execution wave
 _search_cache = {}
 
+# Tool metadata for ToolRegistry auto-discovery
+TOOL_META = {
+    "name": "search_web",
+    "aliases": ["web_search", "search", "google"],
+    "class_name": "WebSearch",
+    "description": "Web Search Engine: Performs web searches using multiple engines (DuckDuckGo, Google, Bing) with automatic fallback. Returns search results with titles, URLs, and snippets.",
+    "actions": [
+        {
+            "name": "search_web",
+            "description": "Search the web for information. Returns structured results with answer snippets.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The search query to execute."},
+                    "max_results": {"type": "integer", "description": "Maximum number of results (default: 5)."},
+                    "search_depth": {"type": "string", "description": "Search depth: 'basic' or 'advanced'."}
+                },
+                "required": ["query"]
+            }
+        }
+    ]
+}
+
+
+class WebSearch:
+    """Wrapper class for unified dispatch."""
+
+    @classmethod
+    async def execute(cls, query: str = "", max_results: int = 5, search_depth: str = "basic", **kwargs) -> Dict[str, Any]:
+        """Unified entry point for dynamic dispatch."""
+        if not query:
+            return {"status": "error", "message": "Missing 'query' parameter for web search."}
+        return await search_web(query, max_results=max_results, search_depth=search_depth)
+
+
 async def search_web(query: str, max_results: int = 5, search_depth: str = "basic") -> Dict[str, Any]:
     """
     Perform a web search with multi-engine support and Playwright fallback.
@@ -25,9 +60,7 @@ async def search_web(query: str, max_results: int = 5, search_depth: str = "basi
     
     # Phase -1: Tavily AI Search (MCP / Library Bridge) - Highest Priority
     tavily_api_key = settings.tavily_api_key
-    
     if tavily_api_key:
-        logger.info(f"[SEARCH_WEB] Attempting Tavily AI {search_depth.upper()} Search...")
         try:
             from tavily import TavilyClient
             client = TavilyClient(api_key=tavily_api_key)
@@ -49,15 +82,13 @@ async def search_web(query: str, max_results: int = 5, search_depth: str = "basi
                 })
             
             if final_response["results"] or final_response["answer"]:
-                logger.info(f"[SEARCH_WEB] Tavily {search_depth} search success ({len(final_response['results'])} results).")
                 _search_cache[cache_key] = final_response
                 return final_response
                 
         except Exception as e:
-            logger.warning(f"[SEARCH_WEB] Tavily search failed: {e}. Falling back to Google...")
+            pass
     
     # Phase 0: Google Search
-    logger.info(f"[SEARCH_WEB] Attempting Google Search for: {query}")
     google_results = await _search_google_robust(query, max_results)
     
     if google_results:
@@ -66,15 +97,12 @@ async def search_web(query: str, max_results: int = 5, search_depth: str = "basi
         return final_response
         
     # Phase 1: DuckDuckGo Lite (Fast, HTTP only - Fallback)
-    logger.info(f"[SEARCH_WEB] Google failed/blocked. Trying DuckDuckGo Lite...")
     results = await _search_duckduckgo_lite(query, max_results)
     
     if results:
-        logger.info(f"[SEARCH_WEB] Lite search success ({len(results)} results).")
         return results
         
     # Phase 2: Bing Fallback (Robust, handles JS/Anti-bot)
-    logger.info(f"[SEARCH_WEB] Lite search failed or blocked. Triggering Bing Robust Fallback...")
     results = await _search_bing_robust(query, max_results)
     
     if not results:
@@ -120,7 +148,6 @@ async def _search_duckduckgo_lite(query: str, max_results: int) -> List[Dict[str
                         "tracking", "affiliate", "marketing"
                     ]
                     if any(p in url_match.lower() for p in ad_patterns):
-                        logger.info(f"[SEARCH_WEB] Filtered out ad link: {url_match[:50]}...")
                         continue
                         
                     results.append({
@@ -149,7 +176,6 @@ async def _search_google_robust(query: str, max_results: int) -> List[Dict[str, 
             
             # Google Search
             search_url = f"https://www.google.com/search?q={query}&num={max_results + 3}"
-            logger.info(f"[SEARCH_GOOGLE] Navigating to Google: {search_url}")
             
             # --- NEW: Specific stealth for Search ---
             from playwright_stealth import stealth_async
@@ -161,7 +187,7 @@ async def _search_google_robust(query: str, max_results: int) -> List[Dict[str, 
             try:
                 await page.wait_for_selector("div.g", timeout=5000)
             except:
-                logger.warning("[SEARCH_GOOGLE] Results div.g not found. Might be blocked or different layout.")
+                pass
 
             # Extract results
             items = await page.query_selector_all("div.g")
@@ -211,7 +237,6 @@ async def _search_bing_robust(query: str, max_results: int) -> List[Dict[str, st
             
             # Using Bing as it's generally more stable for automated headless access than Google
             search_url = f"https://www.bing.com/search?q={query}"
-            logger.info(f"[SEARCH_BING] Navigating to Bing: {search_url}")
             
             await page.goto(search_url, wait_until="domcontentloaded", timeout=20000)
             

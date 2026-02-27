@@ -1,7 +1,7 @@
 import random
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
-from typing import List
+from typing import List, Optional, Any, Union
 from config.settings import settings
 
 
@@ -19,6 +19,45 @@ class AgentIdentity:
     current_mood: str = "OPTIMISTIC"
     energy: float = 1.0  # 1.0 = Full of energy!
     user_affinity: float = 0.5 # 0.0 (Hates) to 1.0 (Loves)
+    
+    # NGO: Dynamic Persona Overrides
+    active_name: Optional[str] = None
+    active_user_pronoun: Optional[str] = None
+    active_bot_pronoun: Optional[str] = None
+
+    async def load_from_memory(self, memory: Any, chat_id: str):
+        """
+        Neural Identity Loading (NGO Fix).
+        Consults the Brain to determine who I am based on past memories.
+        """
+        try:
+            from memory.persistent import MemoryCategory
+            
+            # 1. Search for PERSONA memories
+            persona_memories = await memory.search(category=MemoryCategory.PERSONA, limit=10)
+            if not persona_memories:
+                return
+
+            # Combine memory content for neural reconciliation
+            memory_bits = [str(m.value) for m in persona_memories]
+            
+            # 2. Neural Reconciliation (No hardcoding!)
+            from utils.distiller import MemoryDistiller
+            distiller = MemoryDistiller()
+            identity_data = await distiller.reconcile_persona(memory_bits)
+            
+            if identity_data:
+                if identity_data.get("name"):
+                    self.active_name = identity_data["name"]
+                if identity_data.get("user_pronoun"):
+                    self.active_user_pronoun = identity_data["user_pronoun"]
+                if identity_data.get("bot_pronoun"):
+                    self.active_bot_pronoun = identity_data["bot_pronoun"]
+                
+                logger.info(f"[IDENTITY] Neurally reconciled: {self.active_name} ({self.active_user_pronoun}/{self.active_bot_pronoun})")
+                    
+        except Exception as e:
+            logger.debug(f"[IDENTITY] Failed to load persona neurally: {e}")
 
     def _get_circadian_state(self) -> dict:
         """Returns bio-clock modifiers based on current local time."""
@@ -108,10 +147,10 @@ class AgentIdentity:
             "persona.identity.identity_statement",
             mood=self.current_mood,
             energy=f"{self.energy*100:.0f}%",
-            bot_name=getattr(settings, 'bot_name', 'Brain'),
+            bot_name=self.active_name or getattr(settings, 'bot_name', 'Brain'),
             bot_username=getattr(settings, 'bot_username', 'bot'),
-            user_pronoun=getattr(settings, 'user_pronoun', 'Sếp'),
-            bot_pronoun=getattr(settings, 'bot_pronoun', 'em')
+            user_pronoun=self.active_user_pronoun or getattr(settings, 'user_pronoun', 'Anh'),
+            bot_pronoun=self.active_bot_pronoun or getattr(settings, 'bot_pronoun', 'Em')
         )
     
     @property
@@ -157,7 +196,7 @@ class AgentIdentity:
              c = get_prompt_registry().get("system.consciousness.consciousness_layers", rolling_window_hours=getattr(settings, 'rolling_window_hours', 24))
         return c or ""
     
-    def get_system_prompt(self, phase: str = "full") -> str:
+    def get_system_prompt(self, phase: str = "full", **kwargs) -> str:
         """
         Generate a system prompt based on the current phase.
         All content is dynamically loaded from the Neural Prompt Registry.
@@ -180,10 +219,10 @@ class AgentIdentity:
             "proactive": "persona.identity.proactive",
             "classifier": "system.classifier.classifier",
             "distiller": "system.distiller.distiller",
+            "distiller_reflection": "system.distiller.distiller",
             "critic": "system.critic.critic",
             "cache_critic": "system.critic.cached_critic",
-            "router_brief": "system.router_brief.router_brief",
-            "distiller_reflection": "system.distiller.distiller_reflection",
+            "router_brief": "system.router.router_brief",
             "social_impulse": "system.social_impulse.social_impulse",
             "system_alerts": "system.system_alerts",
             "full": "persona.identity.full"
@@ -192,34 +231,55 @@ class AgentIdentity:
         prompt_key = key_map.get(phase, "persona.identity.full")
         principles_text = "\n".join(f"- {p}" for p in self.principles) if isinstance(self.principles, list) else str(self.principles)
         
+        # Prepare dynamic variables
+        from skills.registry import get_skill_registry
+        skill_registry = get_skill_registry()
+        available_skills = skill_registry.generate_skills_prompt()
+        
+        # Get the skills section block from registry
+        skills_section = registry.get("persona.identity.skills_section", available_skills=available_skills)
+        
         # Inject Dynamic Rules
         from config.rules import AgentRules
         rules_text = AgentRules().get_rules_summary_for_prompt()
         
-        base_prompt = registry.get(
-            prompt_key, 
-            version=self.version,
-            identity_statement=self.identity_statement,
-            mission=self.mission,
-            principles_text=principles_text,
-            mood_guidelines=self.mood_guidelines,
-            thinking_framework=self.thinking_framework,
-            authority=self.authority,
-            safety_constraints=self.safety_constraints,
-            consciousness=self.consciousness,
-            mood=self.current_mood,
-            energy=f"{self.energy*100:.0f}%",
-            bot_name=getattr(settings, 'bot_name', 'Brain'),
-            bot_username=getattr(settings, 'bot_username', 'bot'),
-            user_pronoun=getattr(settings, 'user_pronoun', 'Sếp'),
-            bot_pronoun=getattr(settings, 'bot_pronoun', 'em'),
-            rolling_window_hours=getattr(settings, 'rolling_window_hours', 24)
-        )
+        # Determine current name/pronouns
+        bot_name = self.active_name or getattr(settings, 'bot_name', 'Brain')
+        user_pronoun = self.active_user_pronoun or getattr(settings, 'user_pronoun', 'Anh')
+        bot_pronoun = self.active_bot_pronoun or getattr(settings, 'bot_pronoun', 'Em')
+
+        # Merge defaults with provided kwargs
+        all_kwargs = {
+            "version": self.version,
+            "identity_statement": self.identity_statement,
+            "mission": self.mission,
+            "thinking_framework": self.thinking_framework,
+            "principles": principles_text,
+            "authority": self.authority,
+            "safety_constraints": self.safety_constraints,
+            "available_skills": available_skills,
+            "skills_section": skills_section,
+            "consciousness": self.consciousness,
+            "rules_summary": rules_text,
+            "sovereignty_principles": self.sovereignty_principles,
+            "self_protection_protocol": self.self_protection_protocol,
+            "bot_name": bot_name,
+            "user_pronoun": user_pronoun,
+            "bot_pronoun": bot_pronoun,
+            "mood_guidelines": self.mood_guidelines,
+            "mood": self.current_mood,
+            "energy": f"{self.energy*100:.0f}%",
+            "bot_username": getattr(settings, 'bot_username', 'bot'),
+            "rolling_window_hours": getattr(settings, 'rolling_window_hours', 24)
+        }
+        all_kwargs.update(kwargs)
+        
+        base_prompt = registry.get(prompt_key, **all_kwargs)
         
         # Append rules based on phase intensity
-        if phase == "synthesis":
-            # Pruned rules for synthesis - Focusing on helpfulness and language matching
-            return f"{base_prompt}\n\n### CRITICAL SYSTEM RULES (STRICT):\n- Match the user's language dynamically (Default to Vietnamese if context implies it).\n- Maintain a professional, helpful, and slightly enthusiastic tone.\n- Focus 100% on accuracy and factual grounding from provided results.\n- Stay concise and focused on the Admin's objective."
+        if phase in ["synthesis", "proactive", "social_impulse"]:
+            # Pruned rules for synthesis/proactive - Focusing on helpfulness and language matching
+            return f"{base_prompt}\n\n### CRITICAL SYSTEM RULES (STRICT):\n- Match the user's language dynamically: Use language of user.\n- Maintain a professional, helpful, and slightly enthusiastic tone.\n- Focus 100% on accuracy and factual grounding.\n- Stay concise and focused on the Admin's objective."
         
         # Heavy reasoning phases get full ruleset
         heavy_phases = ["full", "plan", "planning", "chat"]

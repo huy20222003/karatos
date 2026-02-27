@@ -50,6 +50,27 @@ RESTRICTED_COLUMNS = {
 
 FORBIDDEN_KEYWORDS = {"DROP", "TRUNCATE", "ALTER", "GRANT", "REVOKE"}
 
+# Tool metadata for ToolRegistry auto-discovery
+TOOL_META = {
+    "name": "database_dynamic",
+    "aliases": ["dynamic_db", "db_query", "sql"],
+    "class_name": "DatabaseDynamic",
+    "description": "Dynamic Database Engine: Provides CRUD access to the PostgreSQL database with schema awareness, security guardrails, and SQL injection prevention.",
+    "actions": [
+        {
+            "name": "dynamic_db",
+            "description": "Execute a SQL query against the database with safety checks. Supports SELECT, INSERT, UPDATE, DELETE.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The SQL query to execute."}
+                },
+                "required": ["query"]
+            }
+        }
+    ]
+}
+
 class DatabaseDynamic:
     """
     Dynamic database engine for CRUD operations.
@@ -63,6 +84,19 @@ class DatabaseDynamic:
             self.schema_path = schema_path
         
         self.factory = get_db_factory()
+
+    @classmethod
+    async def execute(cls, query: str = "", sql_query: str = "", **kwargs) -> Dict[str, Any]:
+        """
+        Unified entry point for dynamic dispatch.
+        Routes: query → execute_query, no query → get_schema_summary.
+        """
+        instance = cls()
+        q = query or sql_query
+        if not q:
+            schema = instance.get_schema_summary()
+            return {"status": "success", "data": schema, "message": "Database schema retrieved."}
+        return await instance.execute_query(q)
 
     def get_schema_summary(self) -> str:
         """
@@ -209,64 +243,143 @@ class DatabaseDynamic:
 
     async def execute_query(self, query: str, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """
-        Executes a raw SQL query with advanced security checks.
+        Executes a SQL query with advanced security checks.
+        If `query` is natural language, auto-converts to SQL using the schema + LLM.
         """
-        query_upper = query.upper().strip()
+        logger.info(f"[DYNAMIC_DB] Query received: {query[:200]}")
         
-        # 1. Blocked Table & Keyword Check (Regex for better precision)
-        # Prevent multiline comment bypasses
+        # --- STEP 0: Detect if query is natural language or SQL ---
+        sql_to_execute = query.strip()
+        is_natural_language = not self._looks_like_sql(sql_to_execute)
+        
+        if is_natural_language:
+            logger.info(f"[DYNAMIC_DB] Detected natural language input. Converting to SQL...")
+            sql_to_execute = await self._natural_language_to_sql(sql_to_execute)
+            if not sql_to_execute:
+                logger.error("[DYNAMIC_DB] NL→SQL conversion failed. No SQL generated.")
+                return {"status": "error", "data": [], "sql_executed": None, "row_count": 0,
+                        "message": "Could not convert your request to a valid SQL query. Please try rephrasing or provide SQL directly."}
+            logger.info(f"[DYNAMIC_DB] Generated SQL: {sql_to_execute[:300]}")
+        
+        query_upper = sql_to_execute.upper().strip()
+        
+        # 1. Blocked Table & Keyword Check
         clean_query = re.sub(r'/\*.*?\*/', '', query_upper, flags=re.DOTALL)
         clean_query = re.sub(r'--.*$', '', clean_query, flags=re.MULTILINE)
 
         if any(kw in clean_query for kw in FORBIDDEN_KEYWORDS):
-            return [{"error": "Forbidden SQL keyword detected (DROP, TRUNCATE, ALTER, etc.)"}]
+            return {"status": "error", "data": [], "sql_executed": sql_to_execute, "row_count": 0,
+                    "message": "Forbidden SQL keyword detected (DROP, TRUNCATE, ALTER, etc.)"}
 
         # Security Resolution Logic
         words = set(re.findall(r'\b\w+\b', clean_query.lower()))
         
-        # 2. STRICT TABLE BLOCKING (Any operation)
-        # Check if any blocked table is mentioned in the query
+        # 2. STRICT TABLE BLOCKING
         for table in BLOCKED_TABLES:
             if table in words:
-                return [{"error": f"Access to restricted table '{table}' is forbidden by security policy."}]
+                return {"status": "error", "data": [], "sql_executed": sql_to_execute, "row_count": 0,
+                        "message": f"Access to restricted table '{table}' is forbidden by security policy."}
 
         # 3. UPDATE/DELETE SCALAR PROTECTION
         if "UPDATE" in words and any(col in words for col in RESTRICTED_COLUMNS):
-             return [{"error": "Updating sensitive columns is forbidden."}]
+            return {"status": "error", "data": [], "sql_executed": sql_to_execute, "row_count": 0,
+                    "message": "Updating sensitive columns is forbidden."}
 
         try:
             # 4. Execute
+            logger.info(f"[DYNAMIC_DB] Executing SQL: {sql_to_execute[:300]}")
             engine = self.factory.get_sqlalchemy_engine()
             with engine.connect() as conn:
-                result = conn.execute(text(query), params or {})
+                result = conn.execute(text(sql_to_execute), params or {})
                 
                 if query_upper.startswith("SELECT") or "RETURNING" in query_upper:
                     rows = [dict(row) for row in result.mappings().all()]
                     
-                    # 5. DATA REDACTION (Mask Restricted Columns & URL Patterns)
-                    # NGO: Using pattern matching to avoid hardcoding field names
+                    # 5. DATA DROPPING (Remove Restricted Columns & URL Patterns)
                     url_patterns = [r'.*url$', r'.*uri$', r'.*link$', r'^avatar$']
                     
                     if rows:
                         for row in rows:
                             for col in list(row.keys()):
                                 col_lower = col.lower()
-                                # 5. DATA DROPPING (Remove Restricted Columns & URL Patterns)
-                                # NGO: Dropping columns instead of redacting to keep reports focused.
                                 if col_lower in RESTRICTED_COLUMNS:
                                     del row[col]
                                 elif any(re.search(p, col_lower) for p in url_patterns):
                                     del row[col]
                     
-                    return rows
+                    row_count = len(rows)
+                    logger.info(f"[DYNAMIC_DB] Query executed successfully. Rows returned: {row_count}")
+                    return {"status": "success", "data": rows, "sql_executed": sql_to_execute, "row_count": row_count}
                 
                 try:
                     conn.commit()
-                    return [{"status": "success", "rows_affected": result.rowcount}]
+                    affected = result.rowcount
+                    logger.info(f"[DYNAMIC_DB] Write query executed. Rows affected: {affected}")
+                    return {"status": "success", "data": [{"rows_affected": affected}], "sql_executed": sql_to_execute, "row_count": affected}
                 except Exception as e:
                     conn.rollback()
                     raise e
                     
         except Exception as e:
-            logger.error(f"Query execution failed: {e}")
-            return [{"error": str(e)}]
+            logger.error(f"[DYNAMIC_DB] Query execution failed: {e}")
+            return {"status": "error", "data": [], "sql_executed": sql_to_execute, "row_count": 0,
+                    "message": f"SQL execution error: {str(e)}"}
+
+    @staticmethod
+    def _looks_like_sql(query: str) -> bool:
+        """Heuristic: Check if input looks like SQL rather than natural language."""
+        q = query.strip().upper()
+        sql_starters = ("SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "CREATE", "EXPLAIN", "SHOW")
+        return q.startswith(sql_starters)
+
+    async def _natural_language_to_sql(self, nl_query: str) -> Optional[str]:
+        """Convert a natural language query to SQL using schema context + LLM."""
+        import asyncio
+        try:
+            schema = self.get_schema_summary()
+            
+            prompt = f"""You are an expert PostgreSQL query generator. Convert the following natural language request into a valid SQL SELECT query.
+
+DATABASE SCHEMA:
+{schema[:8000]}
+
+USER REQUEST: "{nl_query}"
+
+RULES:
+1. Return ONLY the SQL query. No explanations, no markdown, no code fences.
+2. Use proper JOINs when the user asks about data from multiple tables.
+3. Use ORDER BY when the user implies ordering (first, latest, top, etc.).
+4. Use LIMIT when the user asks for a specific number of results.
+5. Never use DROP, TRUNCATE, ALTER, or any destructive operations.
+6. Use actual PostgreSQL column names from the schema (with @map mappings).
+
+SQL:"""
+
+            from core.brain.model import SharedModelProvider
+            model = SharedModelProvider.get_model(mode="brief")
+            
+            response = await asyncio.wait_for(
+                model.ainvoke(prompt),
+                timeout=60.0
+            )
+            content = response.content if hasattr(response, "content") else str(response)
+            
+            # Clean the response — extract just the SQL
+            sql = content.strip()
+            # Remove markdown code fences if present
+            if sql.startswith("```"):
+                sql = re.sub(r'^```(?:sql)?\s*', '', sql)
+                sql = re.sub(r'\s*```$', '', sql)
+            sql = sql.strip().rstrip(";") + ";"
+            
+            # Final validation
+            if not self._looks_like_sql(sql.rstrip(";")):
+                logger.warning(f"[DYNAMIC_DB] NL→SQL produced non-SQL output: {sql[:100]}")
+                return None
+            
+            return sql
+            
+        except Exception as e:
+            logger.error(f"[DYNAMIC_DB] NL→SQL conversion error: {e}")
+            return None
+

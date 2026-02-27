@@ -38,7 +38,7 @@ class PPFClassifier:
     
     def __init__(
         self, 
-        k: int = 5, 
+        k: int = 3, 
         confidence_threshold: float = 0.85,
         history_file: str = None,
         max_history: int = 500

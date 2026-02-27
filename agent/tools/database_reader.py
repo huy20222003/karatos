@@ -13,6 +13,34 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 
 from config.database import get_db_factory
+from utils.logger import get_logger
+
+logger = get_logger()
+
+# Tool metadata for ToolRegistry auto-discovery
+TOOL_META = {
+    "name": "database_reader",
+    "aliases": ["db_reader", "db_reports", "db_health"],
+    "class_name": "DatabaseReader",
+    "description": "Database Reports & Health: Direct access to PostgreSQL for system health, audit logs, user activity, and pre-defined administrative reports.",
+    "actions": [
+        {
+            "name": "db_reports",
+            "description": "Execute a pre-defined database report operation. Use 'method' to specify report type.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "method": {"type": "string", "description": "Report method: get_system_health, get_pending_reports, get_audit_logs, get_user_activity, get_service_status, execute_custom_query."},
+                    "query": {"type": "string", "description": "SQL SELECT query (only for execute_custom_query)."},
+                    "user_id": {"type": "string", "description": "User ID for user-specific activity reports."},
+                    "hours": {"type": "integer", "description": "Hours to look back."},
+                    "limit": {"type": "integer", "description": "Max results to return."}
+                },
+                "required": []
+            }
+        }
+    ]
+}
 
 class DatabaseReader:
     """
@@ -21,6 +49,60 @@ class DatabaseReader:
     """
     def __init__(self):
         self.factory = get_db_factory()
+
+    @classmethod
+    async def execute(cls, method: str = None, _dispatched_action: str = "", **kwargs) -> Dict[str, Any]:
+        """Unified entry point for dynamic dispatch."""
+        instance = cls()
+        
+        # Determine the target method
+        route = method or _dispatched_action or "get_system_health"
+        
+        # Map of available methods
+        method_map = {
+            "get_system_health": instance.get_system_health,
+            "get_pending_reports": instance.get_pending_reports,
+            "get_audit_logs": instance.get_audit_logs,
+            "get_user_activity": instance.get_user_activity,
+            "get_user_by_id": instance.get_user_by_id,
+            "get_user_by_username": instance.get_user_by_username,
+            "get_service_status": instance.get_service_status,
+            "get_recent_incidents": instance.get_recent_incidents,
+            "execute_custom_query": instance.execute_custom_query,
+            "db_health": instance.get_system_health,
+            "db_reader": instance.get_system_health,
+            "db_reports": instance.get_system_health,
+            "db_read": instance.get_system_health, # Keep old alias for backward compatibility but hidden from metadata
+        }
+        
+        handler = method_map.get(route)
+        if not handler:
+            return {"status": "error", "message": f"Unknown method: {route}. Available: {', '.join(method_map.keys())}"}
+        
+        try:
+            # ROBUST DISPATCH: Filter kwargs to only pass what the handler accepts
+            import inspect
+            sig = inspect.signature(handler)
+            filtered_kwargs = {
+                k: v for k, v in kwargs.items() 
+                if k in sig.parameters and k not in ("_dispatched_action", "method")
+            }
+            
+            # Special case: if we have a 'query' but no method, and we're in a generic call, try custom query
+            if not method and "query" in kwargs and route in ["db_reports", "db_read"]:
+                handler = instance.execute_custom_query
+                filtered_kwargs = {"query": kwargs["query"]}
+
+            # Sync methods — call directly
+            if inspect.iscoroutinefunction(handler):
+                result = await handler(**filtered_kwargs)
+            else:
+                result = handler(**filtered_kwargs)
+                
+            return {"status": "success", "data": result}
+        except Exception as e:
+            logger.error(f"[DATABASE_READER] {route} failed: {e}")
+            return {"status": "error", "message": str(e)}
     
     @contextmanager
     def get_session(self):

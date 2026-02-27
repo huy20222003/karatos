@@ -6,18 +6,52 @@ from utils.logger import get_logger
 from core.brain.model import SharedModelProvider
 from core.brain.prompts.registry import get_prompt_registry
 from core.brain.utils import extract_json, strip_thinking_tags
-from skills.registry import get_skill_registry
 from config.settings import settings
 
 logger = get_logger()
+
+# Tool metadata for ToolRegistry auto-discovery
+TOOL_META = {
+    "name": "browser_subagent",
+    "aliases": ["browser", "browse"],
+    "class_name": "BrowserAgent",
+    "description": "Browser Automation Agent: Controls a web browser via MCP Chrome DevTools to navigate pages, fill forms, click buttons, and extract data. Supports both scripted and autonomous modes.",
+    "actions": [
+        {
+            "name": "browser_subagent",
+            "description": "Execute a browser automation task. Can navigate to URLs, interact with page elements, and extract information.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "TaskName": {"type": "string", "description": "Name of the browser task."},
+                    "Task": {"type": "string", "description": "Detailed description of what to do in the browser."},
+                    "actions": {"type": "array", "description": "Optional scripted actions list."}
+                },
+                "required": ["TaskName", "Task"]
+            }
+        }
+    ]
+}
+
+
+class BrowserAgent:
+    """Wrapper class for unified dispatch."""
+
+    @classmethod
+    async def execute(cls, Task: str = "", TaskName: str = "Browser Task", **kwargs) -> Any:
+        """Unified entry point for dynamic dispatch."""
+        if not Task:
+            return {"status": "error", "message": "Missing 'Task' parameter for browser subagent."}
+        return await browser_subagent(TaskName=TaskName, Task=Task, **kwargs)
+
 
 async def browser_subagent(TaskName: str, Task: str, RecordingName: str = "browser_interaction", actions: Optional[list[dict]] = None, max_steps: int = 20) -> Any:
     """ Execute a browser task via MCP driver. Tool Discovery Edition. """
     try:
         logger.info(f"[BROWSER_MCP] Starting Task: {TaskName}")
-        registry = get_skill_registry()
-        mcp_realm = registry.mcp_realm
-        if not mcp_realm: return {"status": "error", "message": "MCP Realm not available."}
+        from tools.mcp_bridge import get_mcp_bridge
+        mcp_bridge = get_mcp_bridge()
+        if not mcp_bridge: return {"status": "error", "message": "MCP Bridge not available."}
 
         def parse_val(v):
             if v is None: return None
@@ -43,8 +77,8 @@ async def browser_subagent(TaskName: str, Task: str, RecordingName: str = "brows
         async def capture_state_mcp():
             try:
                 await asyncio.sleep(2.0) 
-                url_res = await mcp_realm.execute("chrome-devtools:evaluate_script", {"function": "() => window.location.href"})
-                title_res = await mcp_realm.execute("chrome-devtools:evaluate_script", {"function": "() => document.title"})
+                url_res = await mcp_bridge.execute("chrome-devtools:evaluate_script", {"function": "() => window.location.href"})
+                title_res = await mcp_bridge.execute("chrome-devtools:evaluate_script", {"function": "() => document.title"})
                 current_url = str(parse_val(url_res))
                 current_title = str(parse_val(title_res))
 
@@ -82,7 +116,7 @@ async def browser_subagent(TaskName: str, Task: str, RecordingName: str = "brows
                         return JSON.stringify(items);
                     } catch (e) { return JSON.stringify({error: e.message}); }
                 }"""
-                map_res = await mcp_realm.execute("chrome-devtools:evaluate_script", {"function": js_map})
+                map_res = await mcp_bridge.execute("chrome-devtools:evaluate_script", {"function": js_map})
                 raw_map = parse_val(map_res)
                 if isinstance(raw_map, str):
                     try: 
@@ -95,18 +129,16 @@ async def browser_subagent(TaskName: str, Task: str, RecordingName: str = "brows
                 # NATIVE ERROR DETECTION (Discovery Mode)
                 err_text = ""
                 try:
-                    # Trying a likely tool name
-                    console_res = await mcp_realm.execute("chrome-devtools:list_console_messages", {}) 
+                    console_res = await mcp_bridge.execute("chrome-devtools:list_console_messages", {}) 
                     native_logs = str(parse_val(console_res))
                     if "error" in native_logs.lower():
                          err_text += f"\n[CONSOLE ERRORS]: {native_logs[:500]}"
                 except Exception as e:
-                    # In discovery mode, we log the error to see available tools/args
                     logger.warning(f"[DISCOVERY] Tool call failed: {e}")
                 
                 # Manual fallback 
                 js_semantic = "() => { const text = document.body.innerText.slice(0, 5000); const inputs = Array.from(document.querySelectorAll('input')).map(i => (i.name || i.placeholder || 'input') + ': ' + i.value).join(' | '); return JSON.stringify({ inputs: inputs, text: text }); }"
-                semantic_res = await mcp_realm.execute("chrome-devtools:evaluate_script", {"function": js_semantic})
+                semantic_res = await mcp_bridge.execute("chrome-devtools:evaluate_script", {"function": js_semantic})
                 sem_data = parse_val(semantic_res)
                 if isinstance(sem_data, str):
                     try: sem_data = json.loads(sem_data)
@@ -130,14 +162,12 @@ async def browser_subagent(TaskName: str, Task: str, RecordingName: str = "brows
                     if a_type == "click" and sel:
                         if ":text(" in sel: # Handle pseudo-text selector
                             text = re.search(r':text\("(.*?)"\)', sel).group(1)
-                            # Robust text matching
                             js_click = "() => { const el = Array.from(document.querySelectorAll('a, button')).find(e => e.innerText && e.innerText.includes('" + text + "')); if(el) el.click(); }"
-                            await mcp_realm.execute("chrome-devtools:evaluate_script", {"function": js_click})
+                            await mcp_bridge.execute("chrome-devtools:evaluate_script", {"function": js_click})
                         else:
-                            await mcp_realm.execute("chrome-devtools:click", {"selector": sel})
+                            await mcp_bridge.execute("chrome-devtools:click", {"selector": sel})
                         await asyncio.sleep(2.0)
                     elif a_type == "fill" and sel:
-                        # React Native Value Setter Hack
                         safe_sel = sel.replace("'", "\\'").replace('"', '\\"')
                         safe_val = str(val).replace("'", "\\'").replace('"', '\\"')
                         
@@ -158,23 +188,22 @@ async def browser_subagent(TaskName: str, Task: str, RecordingName: str = "brows
                             " return 'set'; " + \
                             "} return 'not_found'; }"
                         
-                        await mcp_realm.execute("chrome-devtools:evaluate_script", {"function": js_react_hack})
+                        await mcp_bridge.execute("chrome-devtools:evaluate_script", {"function": js_react_hack})
                         
-                        # Verification
                         js_v = "() => (document.querySelector('" + safe_sel + "') || {}).value"
-                        v_res = await mcp_realm.execute("chrome-devtools:evaluate_script", {"function": js_v})
+                        v_res = await mcp_bridge.execute("chrome-devtools:evaluate_script", {"function": js_v})
                         actual_val = parse_val(v_res)
                         if (str(val or '') == str(actual_val or '')):
-                            pass # Silent success
+                            pass
                         else:
                             logger.debug(f"VERIFY FAIL: {sel} exp '{val}', got '{actual_val}'")
                     elif a_type == "navigate" and action.get("url"):
-                        await mcp_realm.execute("chrome-devtools:navigate_page", {"url": action.get("url")})
+                        await mcp_bridge.execute("chrome-devtools:navigate_page", {"url": action.get("url")})
                     elif a_type == "wait": await asyncio.sleep(float(action.get("seconds", 2)))
                 except Exception as e: logger.warning(f"[BROWSER_MCP] {a_type} failed: {e}")
             try:
                 shot = __import__('os').path.abspath(f"debug_step_{int(__import__('time').time())}.png")
-                await mcp_realm.execute("chrome-devtools:take_screenshot", {"path": shot})
+                await mcp_bridge.execute("chrome-devtools:take_screenshot", {"path": shot})
             except: pass
 
         if actions: # Scripted Mode
@@ -185,7 +214,7 @@ async def browser_subagent(TaskName: str, Task: str, RecordingName: str = "brows
         final_result = {"status": "error", "message": "Incomplete"}
         initial_url = (re.search(r'https?://[^\s,]+', Task).group(0).rstrip('.') if re.search(r'https?://[^\s,]+', Task) else None)
         if initial_url:
-            await mcp_realm.execute("chrome-devtools:navigate_page", {"url": initial_url})
+            await mcp_bridge.execute("chrome-devtools:navigate_page", {"url": initial_url})
             await asyncio.sleep(2)
 
         model = SharedModelProvider.get_model()

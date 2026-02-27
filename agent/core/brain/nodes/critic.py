@@ -118,6 +118,7 @@ async def critic_node(state: AgentState) -> AgentState:
             "target_id": decision.get("target_id"),
             "target_type": decision.get("target_type"),
             "reason": criticism.get("suggested_reason", decision.get("reason")),
+            "params": params, # CRITICAL: Preserve context for re-execution or approval
             "confidence": decision.get("confidence", 0),
             "criticized": True,
             "override": True,
