@@ -262,7 +262,6 @@ class TelegramCommandHandler:
             typing_task = asyncio.create_task(keep_typing())
             
             try:
-                await self.agent.memory.record_chat_message(chat_id, "user", text)
                 logger.debug(f"[TELEGRAM] Forwarding to agent: '{text[:50]}...'")
                 
                 # 📥 FILE & PHOTO HANDLING
@@ -308,6 +307,24 @@ class TelegramCommandHandler:
                             temp_file = file_info["path"]
                             logger.info(f"[TELEGRAM] ✅ Audio ready")
 
+                            # Pre-transcribe voice/audio so the brain sees the real user intent,
+                            # and memory stores the transcript instead of a synthetic placeholder.
+                            try:
+                                from tools.audio_processor import AudioProcessor
+                                lang_hint = getattr(processed, "language", None) if processed else None
+                                tr = await AudioProcessor.execute(file_path=file_info["path"], language=lang_hint)
+                                if tr.get("status") == "success":
+                                    transcript = (tr.get("data", {}) or {}).get("text", "").strip()
+                                    if transcript:
+                                        context["audio_transcript"] = transcript
+                                        text = transcript
+                                        logger.info("[TELEGRAM] ✅ Audio transcribed for downstream reasoning.")
+                            except Exception as te:
+                                logger.debug(f"[TELEGRAM] Audio pre-transcription skipped: {te}")
+
+                    # Record the finalized user message (after optional pre-processing)
+                    await self.agent.memory.record_chat_message(chat_id, "user", text)
+
                     # Forward to Agent
                     response = await self.agent.chat(text, chat_id, context=context)
                     
@@ -335,13 +352,9 @@ class TelegramCommandHandler:
         chat_id = str(msg.chat_id)
         
         # Determine target language from message metadata or heuristic
+        from utils.language import language_for_prompt
         lang = getattr(msg, "language", "en")
-        # For Vietnamese users we prefer consistent Vietnamese replies.
-        # Treat "mixed" as Vietnamese, since most chats are VI with some EN terms.
-        if lang in ("vi", "mixed"):
-            language_instruction = "Vietnamese"
-        else:
-            language_instruction = "English"
+        language_instruction = language_for_prompt(lang, default="en")
 
         # Use a hidden prompt style that Niva understands as an internal update
         instruction = f"[INTERNAL_SYSTEM_UPDATE] {context_msg}. Please respond to the User in your style. Required Response Language: {language_instruction}."

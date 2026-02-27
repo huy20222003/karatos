@@ -25,23 +25,16 @@ class NotificationManager:
         Choose language code based primarily on Brain/InputPipeline signal,
         avoiding local heuristics as much as possible.
         """
+        from utils.language import normalize_language_code
+
         # 0. Prefer explicit value coming from Brain / InputPipeline
         if lang_override:
-            code = str(lang_override).lower()
-            # Normalize "mixed" to Vietnamese to avoid hybrid outputs.
-            if code == "mixed":
-                code = "vi"
-            if code in ("vi", "en"):
-                return code
+            return normalize_language_code(lang_override, default="en")
 
         # 1. Optional static configuration fallback
         lang = getattr(settings, "user_language", None)
-        if isinstance(lang, str):
-            code = lang.lower()
-            if code == "mixed":
-                code = "vi"
-            if code in ("vi", "en"):
-                return code
+        if isinstance(lang, str) and lang.strip():
+            return normalize_language_code(lang, default="en")
 
         # 2. Default: English if nothing else is known
         return "en"
@@ -54,8 +47,10 @@ class NotificationManager:
             from core.brain.prompts.registry import get_prompt_registry
             from config.settings import settings
             
+            from utils.language import language_for_prompt
+
             lang_code = NotificationManager._detect_language(language)
-            lang_val = "Vietnamese" if lang_code == "vi" else "English"
+            lang_val = language_for_prompt(lang_code, default="en")
             
             prompt = get_prompt_registry().get(
                 "persona.generator.system_feedback",
@@ -71,6 +66,13 @@ class NotificationManager:
         except Exception as e:
             logger.error(f"[NOTIFICATION] Brain synthesis failed: {e}")
             return context_msg # Fallback to raw context if brain fails
+
+    @staticmethod
+    async def generate_body(context_msg: str, language: Optional[str] = None) -> str:
+        """
+        Public wrapper for Brain-generated user-facing messages.
+        """
+        return await NotificationManager._generate_brain_body(context_msg, language)
 
     @staticmethod
     async def send_alert(title: str, body: str, severity: str = "info", channel_name: str = "telegram", language: Optional[str] = None) -> bool:

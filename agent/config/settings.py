@@ -31,6 +31,24 @@ class Settings(BaseSettings):
     )
 
     # ===========================================
+    # LLM Embedding Model Configuration (Ollama)
+    # ===========================================
+    ollama_embedding_model_name: str = Field(
+        default="nomic-embed-text",
+        description="Name of the model in Ollama",
+        alias="OLLAMA_EMBEDDING_MODEL_NAME"
+    )
+
+    # ===========================================
+    # LLM Vision Model Configuration (Ollama)
+    # ===========================================
+    ollama_vision_model_name: str = Field(
+        default="llama3.2-vision",
+        description="Name of the model in Ollama",
+        alias="OLLAMA_VISION_MODEL_NAME"
+    )
+
+    # ===========================================
     # LLM Model Configuration (Ollama)
     # ===========================================
     ollama_base_url: str = Field(
@@ -42,6 +60,16 @@ class Settings(BaseSettings):
         default="nivacore",
         description="Name of the model in Ollama",
         alias="OLLAMA_MODEL_NAME"
+    )
+    ollama_embedding_model_name: str = Field(
+        default="nomic-embed-text",
+        description="Name of the embedding model in Ollama",
+        alias="OLLAMA_EMBEDDING_MODEL_NAME"
+    )
+    ollama_vision_model_name: str = Field(
+        default="llama3.2-vision",
+        description="Name of the vision model in Ollama",
+        alias="OLLAMA_VISION_MODEL_NAME"
     )
     model_context_size: int = Field(
         default=8192,
@@ -78,6 +106,15 @@ class Settings(BaseSettings):
     )
 
     # ===========================================
+    # Whisper Configuration
+    # ===========================================
+    whisper_model_size: str = Field(
+        default="small",
+        description="Whisper model size (tiny, base, small, medium, large-v3)",
+        alias="WHISPER_MODEL_SIZE"
+    )
+
+    # ===========================================
     # OpenAI & Compatible Providers
     # ===========================================
     openai_api_key: Optional[str] = Field(
@@ -95,6 +132,11 @@ class Settings(BaseSettings):
         description="Model name to use with OpenAI or compatible provider",
         alias="OPENAI_MODEL_NAME"
     )
+    openai_vision_model_name: Optional[str] = Field(
+        default=None,
+        description="Vision-capable model name for OpenAI (optional). Defaults to OPENAI_MODEL_NAME.",
+        alias="OPENAI_VISION_MODEL_NAME"
+    )
 
     # ===========================================
     # Anthropic Configuration
@@ -108,6 +150,11 @@ class Settings(BaseSettings):
         default="claude-3-5-sonnet-latest",
         description="Model name for Anthropic",
         alias="ANTHROPIC_MODEL_NAME"
+    )
+    anthropic_vision_model_name: Optional[str] = Field(
+        default=None,
+        description="Vision-capable model name for Anthropic (optional). Defaults to ANTHROPIC_MODEL_NAME.",
+        alias="ANTHROPIC_VISION_MODEL_NAME"
     )
 
     # ===========================================
@@ -217,6 +264,20 @@ class Settings(BaseSettings):
         alias="MEMORY_KEY"
     )
 
+    # ===========================================
+    # Resend Email Configuration
+    # ===========================================
+    resend_api_key: Optional[str] = Field(
+        default=None,
+        description="API Key for Resend",
+        alias="RESEND_API_KEY"
+    )
+    resend_from_email: str = Field(
+        default="onboarding@resend.dev",
+        description="Sender email for Resend",
+        alias="RESEND_FROM_EMAIL"
+    )
+
     def model_post_init(self, __context):
         """Load and merge MCP config from JSON after initialization"""
         import json
@@ -279,8 +340,8 @@ class Settings(BaseSettings):
     # Dynamic Identity (Runtime)
     bot_name: str = "Brain (Little Niva)"
     bot_username: Optional[str] = None
-    user_pronoun: str = "Sếp"
-    bot_pronoun: str = "em"
+    user_pronoun: str = "Anh"
+    bot_pronoun: str = "Em"
     
     @property
     def telegram_admin_chat_id(self) -> Optional[str]:

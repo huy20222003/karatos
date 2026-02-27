@@ -555,11 +555,9 @@ async def _maybe_generate_social_impulse(state: AgentState, identity: AgentIdent
         # Determine target language for the social impulse.
         # Autonomous cycles do not always have a ProcessedInput attached,
         # so we rely on static configuration as a proxy.
-        lang_cfg = getattr(settings, "user_language", "vi")
-        lang_code = str(lang_cfg or "vi").lower()
-        if lang_code == "mixed":
-            lang_code = "vi"
-        language = "Vietnamese" if lang_code == "vi" else "English"
+        from utils.language import language_for_prompt, normalize_language_code
+        lang_cfg = getattr(settings, "user_language", None) or "en"
+        language = language_for_prompt(normalize_language_code(lang_cfg, default="en"), default="en")
         
         # Gather what's on the brain's mind (pruned for privacy/naturalness)
         recent_activity = state.get("thoughts", [])[-2:] if state.get("thoughts") else ["Quiet cycle"]

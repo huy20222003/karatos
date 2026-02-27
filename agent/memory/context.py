@@ -300,26 +300,42 @@ class ConversationContextManager:
 
     async def hierarchical_compress(self, text: str, model_provider: Any, prompt_registry: Any, chunk_size: int = 8000, prompt_key: str = "core.identity.compression") -> str:
         """
-        Divide and Conquer: Splits text into chunks, summarizes each, 
-        then summarizes the combined results.
+        Semantic Hierarchical Compression: Divide text into semantically coherent chunks,
+        summarize each, then merge. Uses sentence/paragraph boundaries instead of 
+        character-level splitting (textwrap.wrap) to preserve meaning.
         """
-        import textwrap
+        import re
         import asyncio
-        chunks = textwrap.wrap(text, chunk_size, replace_whitespace=False)
-        self.logger.info(f"[CONTEXT] Hierarchical: Splitting {len(text)} chars into {len(chunks)} chunks.")
         
+        # 1. Semantic chunking — split at paragraph/sentence boundaries
+        chunks = self._semantic_chunk(text, chunk_size)
+        self.logger.info(f"[CONTEXT] Hierarchical: {len(text)} chars → {len(chunks)} semantic chunks.")
+        
+        # 2. Summarize chunks in parallel batches (max 3 concurrent)
         summaries = []
-        for i, chunk in enumerate(chunks):
-            try:
-                self.logger.info(f"[CONTEXT] Summarizing chunk {i+1}/{len(chunks)}...")
+        batch_size = 3
+        for batch_start in range(0, len(chunks), batch_size):
+            batch = chunks[batch_start:batch_start + batch_size]
+            tasks = []
+            for i, chunk in enumerate(batch):
+                idx = batch_start + i + 1
+                self.logger.info(f"[CONTEXT] Summarizing chunk {idx}/{len(chunks)}...")
                 prompt = prompt_registry.get(prompt_key, history_text=chunk)
-                # Use a slightly faster timeout per chunk
-                resp = await asyncio.wait_for(self.model_provider.ainvoke(prompt), timeout=120.0)
+                tasks.append(asyncio.wait_for(model_provider.ainvoke(prompt), timeout=120.0))
+            
+            try:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
                 from core.brain.utils import get_llm_content
-                summaries.append(get_llm_content(resp))
+                for r in results:
+                    if isinstance(r, Exception):
+                        self.logger.warning(f"[CONTEXT] Chunk summarization failed: {r}")
+                        summaries.append(chunk[:1000] + "... [CHUNK SUMMARY FAILED]")
+                    else:
+                        summaries.append(get_llm_content(r))
             except Exception as e:
-                self.logger.warning(f"[CONTEXT] Chunk {i+1} summarization failed: {e}")
-                summaries.append(chunk[:1000] + "... [CHUNK SUMMARY FAILED]")
+                self.logger.warning(f"[CONTEXT] Batch summarization failed: {e}")
+                for chunk in batch:
+                    summaries.append(chunk[:1000] + "... [CHUNK SUMMARY FAILED]")
         
         combined_summaries = "\n\n".join(summaries)
         if len(combined_summaries) > 5000:
@@ -327,7 +343,7 @@ class ConversationContextManager:
              self.logger.info(f"[CONTEXT] Final meta-summarization of {len(combined_summaries)} chars...")
              try:
                  prompt = prompt_registry.get(prompt_key, history_text=combined_summaries)
-                 final_resp = await asyncio.wait_for(self.model_provider.ainvoke(prompt), timeout=180.0)
+                 final_resp = await asyncio.wait_for(model_provider.ainvoke(prompt), timeout=180.0)
                  from core.brain.utils import get_llm_content
                  return get_llm_content(final_resp)
              except Exception as e:
@@ -335,6 +351,65 @@ class ConversationContextManager:
                  return combined_summaries[:5000] + "... [META-SUMMARY FAILED]"
         
         return combined_summaries
+
+    def _semantic_chunk(self, text: str, max_chunk_size: int = 8000) -> list[str]:
+        """
+        Split text into semantically coherent chunks at natural boundaries.
+        Priority: paragraph breaks > sentence endings > clause boundaries.
+        """
+        import re
+        
+        # Split into paragraphs first
+        paragraphs = re.split(r'\n\s*\n', text)
+        
+        chunks = []
+        current_chunk = []
+        current_size = 0
+        
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+            
+            para_len = len(para)
+            
+            # If single paragraph exceeds limit, split by sentences
+            if para_len > max_chunk_size:
+                if current_chunk:
+                    chunks.append('\n\n'.join(current_chunk))
+                    current_chunk = []
+                    current_size = 0
+                
+                # Split long paragraph by sentences
+                sentences = re.split(r'(?<=[.!?。])\s+', para)
+                sent_chunk = []
+                sent_size = 0
+                for sent in sentences:
+                    if sent_size + len(sent) > max_chunk_size and sent_chunk:
+                        chunks.append(' '.join(sent_chunk))
+                        sent_chunk = []
+                        sent_size = 0
+                    sent_chunk.append(sent)
+                    sent_size += len(sent)
+                if sent_chunk:
+                    chunks.append(' '.join(sent_chunk))
+                continue
+            
+            # If adding this paragraph exceeds limit, start new chunk
+            if current_size + para_len > max_chunk_size and current_chunk:
+                chunks.append('\n\n'.join(current_chunk))
+                current_chunk = []
+                current_size = 0
+            
+            current_chunk.append(para)
+            current_size += para_len
+        
+        # Don't forget the last chunk
+        if current_chunk:
+            chunks.append('\n\n'.join(current_chunk))
+        
+        return chunks if chunks else [text[:max_chunk_size]]
+
 
     def associative_compress(self, text: str, query: str) -> str:
         """
@@ -345,9 +420,8 @@ class ConversationContextManager:
         if len(lines) < 20: return text
         
         # 1. Extract Anchors (Keywords from query)
-        # Filter out common Vietnamese/English stop words manually or just take words > 3 chars
-        stop_words = {'có', 'không', 'với', 'cho', 'này', 'là', 'được', 'của', 'the', 'and', 'with', 'what', 'list', 'show'}
-        anchors = [w.lower() for w in re.findall(r'\w+', query) if len(w) > 3 and w.lower() not in stop_words]
+        # Avoid language-specific stopword lists; rely on length + later uniqueness filtering.
+        anchors = [w.lower() for w in re.findall(r'\w+', query) if len(w) > 3]
         
         if not anchors:
             # Fallback to structural sampling if no query anchors

@@ -332,18 +332,13 @@ class Brain:
             total_steps = len(state.get("plan", []))
             current_step = state.get("current_step", 0) + 1
             
-            # Determine target language
+            # Determine target language (not limited to vi/en)
+            from utils.language import language_for_prompt, normalize_language_code
             processed = state.get("processed")
-            # Default to Vietnamese for our primary user base.
-            lang_val = "Vietnamese"
-            if processed:
-                code = getattr(processed, "language", "vi")
-                # Treat "mixed" like Vietnamese so the LLM answers thuần Việt,
-                # even if the user dùng lẫn vài từ tiếng Anh.
-                if code in ("vi", "mixed"):
-                    lang_val = "Vietnamese"
-                else:
-                    lang_val = "English"
+            code = getattr(processed, "language", None) if processed else None
+            if not code:
+                code = getattr(settings, "user_language", None) or "en"
+            lang_val = language_for_prompt(normalize_language_code(code, default="en"), default="en")
 
             prompt = p_registry.get(
                 "persona.generator.status_notification",

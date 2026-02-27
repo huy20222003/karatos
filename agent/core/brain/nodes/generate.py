@@ -313,17 +313,14 @@ async def chat_generate_node(state: ChatState) -> ChatState:
         p_registry = get_prompt_registry()
         
         # Prepare language and identity
+        from utils.language import language_for_prompt, normalize_language_code
         processed = state.get("processed")
-        # Mặc định ưu tiên trả lời tiếng Việt.
-        lang_val = "Vietnamese"
+        code = None
         if processed:
-            code = getattr(processed, "language", "vi")
-            # Nếu có ký tự tiếng Việt hoặc chat "mixed" thì ép về Vietnamese
-            # để tránh output nửa Anh nửa Việt.
-            if code in ("vi", "mixed"):
-                lang_val = "Vietnamese"
-            else:
-                lang_val = "English"
+            code = getattr(processed, "language", None)
+        if not code:
+            code = getattr(settings, "user_language", None) or "en"
+        lang_val = language_for_prompt(normalize_language_code(code, default="en"), default="en")
 
         # Use cached identity from parallel_startup (eliminates duplicate load_from_memory)
         identity = state.get("context", {}).get("identity")

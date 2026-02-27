@@ -67,3 +67,10 @@ alerts:
     Score   : {score:.2f}
     Reason  : {reason}
     → Flagged for review. No automated action taken. Awaiting Admin decision.
+
+# ─────────────────────────────────────────────────────────
+# APPROVAL PROMPTS — Explanations for pending actions.
+# ─────────────────────────────────────────────────────────
+approvals:
+  cli_explanation: |-
+    {bot_pronoun} đã sẵn sàng thực hiện yêu cầu, nhưng lệnh này (`{cmd}`) cần được phê duyệt thủ công. {user_pronoun} vui lòng kiểm tra và bấm nút phê duyệt giúp {bot_pronoun} nhé!

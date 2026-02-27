@@ -200,18 +200,21 @@ async def chat_act_node(state: ChatState) -> ChatState:
                 
                 # 2. Inform the user in the main chat FIRST (to provide context above the buttons)
                 from channels.base import get_channel
-                from core.brain.prompts.registry import get_prompt_registry
                 
                 tg_channel = get_channel("telegram")
                 chat_id = state.get("context", {}).get("chat_id")
                 
                 if tg_channel and chat_id:
-                    prompts = get_prompt_registry()
-                    key = "system.system_alerts.approvals.cli_explanation"
-                    if user_lang != "vi":
-                        key += "_en"
-                    
-                    explanation = prompts.get(key, cmd=command_str[:50] + ("..." if len(command_str) > 50 else ""))
+                    from utils.notification import NotificationManager
+                    explanation = await NotificationManager.generate_body(
+                        (
+                            "Explain that a manual approval is required before executing a CLI command.\n"
+                            f"Command: `{command_str[:50] + ('...' if len(command_str) > 50 else '')}`\n"
+                            f"Reason: {reason}\n"
+                            "Ask the user to approve or deny using the buttons."
+                        ),
+                        language=user_lang,
+                    )
                     await tg_channel.send(explanation, recipient=chat_id)
 
                 # 3. Trigger interactive approval buttons

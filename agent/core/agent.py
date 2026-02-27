@@ -210,6 +210,12 @@ class BrainAgent:
                         outcome="PENDING"
                     )
                     
+                    # Attach decision_id to queued action metadata so outcomes can be persisted.
+                    if decision_id:
+                        meta = decision.get("metadata") or {}
+                        meta["decision_id"] = decision_id
+                        decision["metadata"] = meta
+
                     # FULLY AUTONOMOUS: Always add to queue for safe execution
                     await self.queue.add_from_decision(decision)
                     
@@ -279,6 +285,15 @@ class BrainAgent:
         
         if result.get("success"):
             self._actions_this_hour += 1
+
+        # Persist outcome back to decision history if available.
+        try:
+            decision_id = (action.metadata or {}).get("decision_id")
+            if decision_id:
+                outcome = "SUCCESS" if result.get("success") else "FAILED"
+                await self.memory.update_decision_outcome(decision_id, outcome)
+        except Exception as e:
+            logger.debug(f"[MEMORY] Failed to persist decision outcome: {e}")
             
         return result
             
@@ -354,6 +369,9 @@ class BrainAgent:
         
         # 3. Run graph-based chat
         try:
+            # --- NGO FIX: Record User Message (Start of cycle) ---
+            await self.memory.record_chat_message(chat_id, "user", processed.clean_text)
+            
             # Note: Brain.chat will now use ctx["processed"] if available
             final_state = await self.brain.chat(processed.clean_text, chat_id, ctx)
             
@@ -366,6 +384,12 @@ class BrainAgent:
             # NONE classification: Brain decided this message is not for us — stay silent
             if response is None:
                 return None
+
+            # --- NGO FIX: Record Assistant Response (End of cycle) ---
+            # This triggers neural distillation of the interaction
+            resp_text = response if isinstance(response, str) else response.get("text", "")
+            if resp_text:
+                await self.memory.record_chat_message(chat_id, "assistant", resp_text)
             
             # Standardize response to dict structure
             if isinstance(response, str):

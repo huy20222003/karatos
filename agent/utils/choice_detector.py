@@ -6,8 +6,7 @@ to choose between concrete options, and returns a UI-ready payload.
 from typing import Any, Dict, List, Optional, Union
 import logging
 
-from config.settings import settings
-from core.brain.model import SharedModelProvider
+from core.brain.model import BrainModel
 from core.brain.prompts.registry import get_prompt_registry
 from core.brain.utils import extract_json, get_llm_content
 
@@ -27,11 +26,12 @@ async def detect_choices(
         return {"is_choice": False, "style": "none", "options": []}
 
     try:
-        model = SharedModelProvider.get_model()
+        model = BrainModel(mode="brief")
         registry = get_prompt_registry()
 
-        # Normalize language descriptor for the prompt.
-        lang_desc = "Vietnamese" if language == "vi" else "English"
+        # Normalize language descriptor for the prompt (not limited to vi/en).
+        from utils.language import language_for_prompt
+        lang_desc = language_for_prompt(language, default="en")
 
         prompt = registry.get(
             "system.choices.choices_detect",
@@ -40,7 +40,7 @@ async def detect_choices(
             language=lang_desc,
         )
 
-        raw = await model.think(prompt, phase="brief")
+        raw = await model.think(prompt, phase="brief", mood="NEUTRAL", timeout=60.0)
         content = get_llm_content(raw)
         data = extract_json(content)
         if not isinstance(data, dict):

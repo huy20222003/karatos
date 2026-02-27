@@ -22,16 +22,40 @@ logger = get_logger()
 
 
 class MemoryCategory(str, Enum):
-    """Memory categories matching Prisma enum"""
-    USER_HISTORY = "USER_HISTORY"
-    DECISION = "DECISION"
-    LEARNING = "LEARNING"
-    CONTEXT = "CONTEXT"
-    SYSTEM = "SYSTEM"
-    A2A = "A2A"
-    EXPERIENCE = "EXPERIENCE"
-    REFLECTION = "REFLECTION"
-    SENTIMENT = "SENTIMENT"
+    """
+    Human-Like Cognitive Memory Categories.
+    Organized by brain function — mirrors how humans store and recall information.
+    """
+    # ═══ EPISODIC MEMORY (What happened) ═══
+    CONTEXT = "CONTEXT"           # Current session/conversation context (short-term)
+    EXPERIENCE = "EXPERIENCE"     # Past events and technical encounters (long-term)
+    DECISION = "DECISION"         # Choices made and their outcomes
+    EMOTION = "EMOTION"           # How events felt — joy, frustration, satisfaction
+
+    # ═══ SEMANTIC MEMORY (What I know) ═══
+    LEARNING = "LEARNING"         # Verified knowledge, confirmed facts
+    FACT = "FACT"                 # Objective facts about user/world/environment
+    PROCEDURAL = "PROCEDURAL"     # How-to knowledge — step-by-step workflows
+
+    # ═══ IDENTITY MEMORY (Who I am) ═══
+    PERSONA = "PERSONA"           # Bot's name, tone, personality style
+    REFLECTION = "REFLECTION"     # Self-improvement lessons, behavioral corrections
+    BELIEF = "BELIEF"             # Core values and guiding principles
+
+    # ═══ SOCIAL MEMORY (Who they are) ═══
+    USER_PROFILE = "USER_PROFILE" # User preferences, attributes, stated constraints
+    USER_HISTORY = "USER_HISTORY" # User action history and interactions
+    RELATIONSHIP = "RELATIONSHIP" # Social dynamics — trust, closeness, roles
+    SENTIMENT = "SENTIMENT"       # Current emotional state tracking (mood)
+
+    # ═══ EXECUTIVE MEMORY (What I want) ═══
+    GOAL = "GOAL"                 # Active objectives, ongoing projects
+    HABIT = "HABIT"               # Recurring patterns, routines, behavioral tendencies
+
+    # ═══ SYSTEM MEMORY (Technical state) ═══
+    SYSTEM = "SYSTEM"             # Infrastructure/platform state
+    METADATA = "METADATA"         # Technical details, system context
+    A2A = "A2A"                   # Agent-to-agent communication records
 
 
 @dataclass
@@ -84,11 +108,20 @@ class PersistentMemory:
         embedding_text: Optional[str] = None
     ) -> str:
         """
-        Store a memory in Markdown files.
+        Store a memory in Markdown files with deduplication.
+        Before storing, checks if a similar memory exists (keyword overlap > 70%).
+        If similar: updates importance instead of creating duplicate.
         """
         expires_at = None
         if expires_in_days:
             expires_at = datetime.utcnow() + timedelta(days=expires_in_days)
+        
+        # Deduplication check — skip for session/context data
+        if category not in (MemoryCategory.CONTEXT, MemoryCategory.USER_HISTORY):
+            similar = self._find_similar(key, str(value), category)
+            if similar:
+                logger.debug(f"[MEMORY] Dedup: Similar memory found for '{key[:40]}', skipping duplicate.")
+                return f"md:dedup:{similar.key}"
             
         try:
             # Sync to Markdown (Source of Truth)
@@ -108,6 +141,46 @@ class PersistentMemory:
         except Exception as e:
             logger.error(f"[MEMORY] Failed to store memory: {e}")
             raise
+
+    def _find_similar(self, key: str, value: str, category: MemoryCategory) -> Optional[Any]:
+        """
+        Deduplication via Jaccard Similarity on keyword sets.
+        Returns existing similar entry if overlap > 0.7, else None.
+        """
+        try:
+            # Extract keywords from new memory
+            new_text = f"{key} {value}".lower()
+            new_words = set(w for w in re.findall(r'\w+', new_text) if len(w) > 2)
+            
+            if len(new_words) < 3:
+                return None  # Too few keywords to compare meaningfully
+            
+            # Search existing memories for potential duplicates
+            existing = self.md_storage.search_by_keywords(list(new_words)[:5], limit=10)
+            
+            for entry in existing:
+                if entry.category != category.value:
+                    continue
+                    
+                entry_text = f"{entry.key} {str(entry.value)}".lower()
+                entry_words = set(w for w in re.findall(r'\w+', entry_text) if len(w) > 2)
+                
+                if not entry_words:
+                    continue
+                
+                # Jaccard similarity = |A ∩ B| / |A ∪ B|
+                intersection = new_words & entry_words
+                union = new_words | entry_words
+                similarity = len(intersection) / len(union) if union else 0
+                
+                # Require both high similarity AND meaningful overlap (min 5 shared words)
+                if similarity > 0.75 and len(intersection) >= 5:
+                    return entry
+                    
+        except Exception as e:
+            logger.debug(f"[MEMORY] Dedup check failed: {e}")
+        
+        return None
             
     async def recall(self, key: str) -> Optional[Any]:
         """
@@ -127,16 +200,26 @@ class PersistentMemory:
             
     async def search(
         self,
+        query: str = "",
         category: Optional[MemoryCategory] = None,
         min_importance: float = 0.0,
         limit: int = 50
     ) -> list[MemoryEntry]:
         """
-        Search memories in Markdown using keyword retrieval.
-        Note: Category filter is currently applied after retrieval.
+        Search memories with optional query, category filter, and importance threshold.
         """
-        # We use deep_recall logic for searching
-        return await self.deep_recall(query_text=category.value if category else "", limit=limit)
+        search_text = query or (category.value if category else "")
+        results = await self.deep_recall(query_text=search_text, limit=limit * 2)
+        
+        # Apply category filter
+        if category:
+            results = [r for r in results if r.category == category]
+        
+        # Apply importance filter
+        if min_importance > 0:
+            results = [r for r in results if r.importance >= min_importance]
+        
+        return results[:limit]
 
     async def search_semantic(
         self,
@@ -171,20 +254,19 @@ class PersistentMemory:
         query_vector: Optional[list[float]] = None
     ) -> list[MemoryEntry]:
         """
-        Phase 5: Critical Markdown Memory Recall.
-        Strictly uses fast Regex/Keyword Markdown indexing.
+        Critical Markdown Memory Recall with relevance scoring.
+        Uses keyword matching with scoring (better matches ranked higher).
         """
         import re
         
-        # 1. Clean keywords from query text
-        stop_words = {'có', 'không', 'với', 'cho', 'này', 'là', 'những', 'của', 'the', 'and', 'with', 'what'}
-        keywords = [w.lower() for w in re.findall(r'\w+', query_text) if len(w) > 3 and w.lower() not in stop_words]
+        # 1. Clean keywords from query text (language-agnostic)
+        keywords = [w.lower() for w in re.findall(r'\w+', query_text) if len(w) > 2]
         
         if not keywords:
-            # If no keywords, return recent memories instead of empty
-            keywords = ["memory"] # broad search
+            keywords = ["memory"]
             
-        md_matches = self.md_storage.search_by_keywords(keywords, limit=limit)
+        # Fetch more results for scoring
+        md_matches = self.md_storage.search_by_keywords(keywords, limit=limit * 3)
         
         results = []
         for entry in md_matches:
@@ -193,6 +275,11 @@ class PersistentMemory:
                 cat_enum = MemoryCategory(entry.category)
             except:
                 pass
+            
+            # Score by keyword match count
+            entry_text = f"{entry.key} {str(entry.value)}".lower()
+            match_count = sum(1 for kw in keywords if kw in entry_text)
+            relevance_score = match_count / max(len(keywords), 1)
                 
             results.append(MemoryEntry(
                 id=f"md:{entry.key}",
@@ -200,10 +287,13 @@ class PersistentMemory:
                 value=entry.value,
                 category=cat_enum,
                 importance=entry.importance,
-                created_at=datetime.fromisoformat(entry.created_at) if entry.created_at else datetime.utcnow()
+                created_at=datetime.fromisoformat(entry.created_at) if entry.created_at else datetime.utcnow(),
+                score=relevance_score
             ))
-            
-        return results
+        
+        # Sort by relevance score (higher = better match), then by importance
+        results.sort(key=lambda x: (x.score, x.importance), reverse=True)
+        return results[:limit]
 
     # ==========================================
     # USER HISTORY OPERATIONS
