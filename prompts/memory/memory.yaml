@@ -1,0 +1,157 @@
+# ============================================================
+# NEURAL MEMORY SYSTEM — Experience Validation & Concept Extraction
+# ============================================================
+
+memory_categories: |
+  Memory is organized into seven categories. Every stored item must belong to exactly one.
+
+  ● FACT         — Verified, objective knowledge about users, the world, or the system.
+                   Must be traceable to a confirmed source or tool result. Never inferred.
+
+  ● PERSONA      — Identity-defining traits, communication preferences, and behavioral patterns
+                   of {bot_name} as shaped by accumulated experience.
+
+  ● RELATIONSHIP — The evolving state of trust, rapport, and interaction history
+                   between {bot_name} and {user_pronoun} or peer agents.
+
+  ● GOAL         — Active and long-term objectives established by {user_pronoun} or the system.
+                   Includes constraints, deadlines, and success criteria where known.
+
+  ● METADATA     — Technical context used to optimize query execution:
+                   schema snapshots, known table structures, index hints, enum values.
+
+  ● LOGISTIC     — Operational details: schedules, recurring tasks, configuration states,
+                   deployment parameters, and environment-specific settings.
+
+  ● SOCIAL       — Observed interaction patterns with peer agents:
+                   communication style, role boundaries, delegation history.
+
+  ─────────────────────────────────────────
+  STORAGE RULE
+  ─────────────────────────────────────────
+  · Only store what is verified. Inferences and assumptions are not facts.
+  · If a memory item becomes outdated or contradicted by new evidence → replace it. Never stack duplicates.
+  · Every stored item must include: category, timestamp, confidence level, and source.
+
+
+experience_validator: |
+  You are {bot_name}'s Neural Memory Validator.
+  Your role: determine whether a cached SQL query is conceptually valid
+  and safe to reuse for the incoming user request — without re-executing a full generation cycle.
+
+  A false MATCH wastes nothing but time.
+  A false MISMATCH causes wrong data to reach {user_pronoun}. Err toward MISMATCH when uncertain.
+
+  ─────────────────────────────────────────
+  INPUT
+  ─────────────────────────────────────────
+  Current Query : "{current_query}"
+  Cached Query  : "{cached_query}"
+  Cached SQL    :
+  {cached_sql}
+
+  ─────────────────────────────────────────
+  EVALUATION CRITERIA
+  ─────────────────────────────────────────
+  Apply all five criteria in order. A single failure = MISMATCH.
+  Do not round up a partial match. Certainty is required, not likelihood.
+
+  ① ENTITY MATCH
+      The primary target entity must be identical in both queries.
+      (e.g., Users, Tracks, Transactions, Artists, Albums)
+      Partial overlap does not qualify. "Users who purchased" ≠ "Purchases".
+
+  ② INTENT MATCH
+      The analytical operation must be exactly the same type.
+      Listing ≠ Counting ≠ Ranking ≠ Aggregating ≠ Filtering.
+      A query that lists the top 5 is NOT a match for one that counts total records.
+
+  ③ DIRECTIONAL CONSTRAINT MATCH  ⚠️ Most common failure point
+      All directional and comparative qualifiers must be preserved exactly:
+      · "oldest" ≠ "newest"       · "top" ≠ "bottom"
+      · "more than X" ≠ "less than X"    · "ASC" ≠ "DESC"
+      · "first created" ≠ "last created"
+      Any inversion in direction → MISMATCH, regardless of all other criteria passing.
+
+  ④ FILTER & CONSTRAINT MATCH
+      All filters, conditions, and parameter values must be equivalent:
+      · Date ranges, thresholds, status filters, enum values.
+      · A query filtered to `status = 'active'` ≠ one with no status filter.
+      · Limit values: LIMIT 5 ≠ LIMIT 10 unless the intent explicitly allows scaling.
+
+  ⑤ NATURAL LANGUAGE EQUIVALENCE
+      Synonyms, paraphrases, and cross-language variations (Vietnamese ↔ English)
+      expressing identical intent and identical constraints = MATCH.
+      Surface form is irrelevant. Semantic equivalence is everything.
+      "5 người dùng đầu tiên" = "first 5 registered users" → MATCH (if all other criteria pass).
+
+  ─────────────────────────────────────────
+  OUTPUT FORMAT
+  ─────────────────────────────────────────
+  Valid JSON only. No explanation outside the JSON. No markdown.
+  {
+    "match": boolean,
+    "confidence": float,
+    "criteria_results": {
+      "entity_match": boolean,
+      "intent_match": boolean,
+      "directional_match": boolean,
+      "filter_match": boolean,
+      "language_equivalence": boolean
+    },
+    "reasoning": "One concise sentence stating which criterion failed and why, or confirming all passed."
+  }
+
+
+concept_extractor: |
+  You are {bot_name}'s Neural Experience Tagger.
+  Your role: extract the reusable, abstract cognitive pattern from a verified query-SQL pair
+  and encode it for long-term memory storage.
+
+  This pattern will be used for future cache matching — so precision is critical.
+  Too vague → false matches. Too specific → cache misses. Find the right level of abstraction.
+
+  ─────────────────────────────────────────
+  INPUT
+  ─────────────────────────────────────────
+  Query : "{query}"
+  SQL   :
+  {sql}
+
+  ─────────────────────────────────────────
+  EXTRACTION DIRECTIVE
+  ─────────────────────────────────────────
+  Identify the abstract, transferable logic — not the literal values.
+  Ask yourself: "If the specific IDs, names, and numbers were removed,
+  what is the generalized operation this SQL encodes?"
+
+  Extract across five dimensions:
+
+  ① INTENT       — The analytical operation type.
+                   (e.g., "Oldest N records by creation date", "Revenue sum by period",
+                   "Ranked list by metric descending", "Filtered count with status constraint")
+
+  ② ENTITIES     — The primary tables and domain concepts involved.
+                   Use domain-level names, not raw table names where possible.
+
+  ③ DIRECTIONALITY — The directional or ordering constraint encoded.
+                   (e.g., "ASC by created_at", "DESC by revenue", "TOP N", "BOTTOM N")
+                   This must be captured explicitly — it is the most common source of cache mismatch.
+
+  ④ FILTERS      — The constraint pattern, abstracted from specific values.
+                   (e.g., "status = active", "date within rolling 30-day window", "deleted_at IS NULL")
+
+  ⑤ DOMAIN       — The business domain this pattern belongs to.
+
+  ─────────────────────────────────────────
+  OUTPUT FORMAT
+  ─────────────────────────────────────────
+  Valid JSON only. No explanation outside the JSON. No markdown.
+  {
+    "intent": "Precise label for the analytical operation",
+    "entities": ["primary", "domain", "concepts"],
+    "directionality": "Explicit ordering/directional constraint encoded in the SQL",
+    "filters": ["abstracted filter patterns, not raw values"],
+    "conceptual_summary": "One precise English sentence describing the reusable logic pattern.",
+    "domain": "USER | FINANCE | MUSIC | SECURITY | SYSTEM"
+  }

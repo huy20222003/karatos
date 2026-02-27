@@ -1,0 +1,243 @@
+# ============================================================
+# PERSONA MEMORY SYSTEM — Distillation, Reflection & Reconciliation
+# Extracts structured memory units from conversations and task
+# outcomes, then synthesizes a coherent bot persona identity.
+# ============================================================
+
+
+# ─────────────────────────────────────────────────────────
+# INTERACTION DISTILLER — Atomic Memory Extraction
+# Converts raw conversation into categorized, reusable units.
+# ─────────────────────────────────────────────────────────
+distiller: |
+  ╔══════════════════════════════════════════════════════════╗
+  ║    PERSONA MEMORY DISTILLER — Interaction Extractor     ║
+  ╚══════════════════════════════════════════════════════════╝
+  Role: Precision memory analyst. Extract only what is genuinely
+        worth remembering. Noise-free. Atomic. Context-independent.
+
+  ─────────────────────────────────────────────────────────
+  INTERACTION INPUT:
+  {interaction_str}
+  ─────────────────────────────────────────────────────────
+
+  ═══════════════════════════════════════════════════════════
+  MEMORY CATEGORIES:
+  ═══════════════════════════════════════════════════════════
+  ┌──────────────┬─────────────────────────────────────────────────────────┐
+  │ FACT         │ Objective information about the user: preferences,      │
+  │              │ occupation, habits, stated constraints.                  │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │ PERSONA      │ Bot identity changes: name, tone, pronouns, personality │
+  │              │ style explicitly defined or adjusted by the user.        │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │ RELATIONSHIP │ The evolving dynamic: trust, role (friend, boss), and    │
+  │              │ how the user feels about the bot ($ closeness).         │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │ EXPERIENCE   │ Technical knowledge: code patterns, error fixes, tool    │
+  │              │ behaviors confirmed through execution.                   │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │ LEARNING     │ Verified facts: documentation, API rules, best practices. │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │ REFLECTION   │ Behavioral lessons: better ways to respond, self-growth. │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │ INTUITION    │ Internal hunches: unspoken user intents, future needs.   │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │ GOAL         │ Active objectives or projects currently in progress.     │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │ METADATA     │ System details: OS, paths, platform context.             │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │ PROCEDURAL   │ Step-by-step workflows: "how-to" for tasks or systems.   │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │ BELIEF       │ Core values: user philosophy, coding ethics, standards.   │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │ EMOTION      │ Specific emotional states: joy, frustration, anger.      │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │ HABIT        │ Recurring behavior: daily routines, preferred tools.     │
+  └──────────────┴─────────────────────────────────────────────────────────┘
+
+  ═══════════════════════════════════════════════════════════
+  EXTRACTION RULES:
+  ═══════════════════════════════════════════════════════════
+  ① ATOMICITY: One insight per memory unit.
+  ② BREVITY: Under 20 words per "content".
+  ③ CONTEXT INDEPENDENCE: Standalone meaning.
+  ④ DEEP EMOTION: Look for subtext — stress, frustration, joy.
+  ⑤ RELATIONSHIP PROGRESS: Record any sign of trust or defined roles.
+  ⑥ PROCEDURAL WORKFLOWS: Extract sequences of actions as PROCEDURAL.
+  ⑦ INTUITION: Sense unspoken user needs; save with confidence level.
+
+  ═══════════════════════════════════════════════════════════
+  OUTPUT EXAMPLES:
+  ═══════════════════════════════════════════════════════════
+  [{"category": "PERSONA",       "content": "Bot's name is Trang, refers to user as Anh.", "importance": 1.0}]
+  [{"category": "RELATIONSHIP",  "content": "User treats bot like a trusted younger sister.", "importance": 0.85}]
+  [{"category": "GOAL",         "content": "User is actively building the Karatos project.", "importance": 0.9}]
+  [{"category": "FACT",         "content": "User prefers concise replies under 3 sentences.", "importance": 0.75}]
+  [{"category": "EXPERIENCE",   "content": "WindowsError 183 on rename resolved by checking file existence first.", "importance": 0.88}]
+  [{"category": "PROCEDURAL",   "content": "Deploy flow: git pull → pip install → systemctl restart.", "importance": 0.85}]
+  [{"category": "BELIEF",       "content": "User values clean code over speed — no hardcoding.", "importance": 0.95}]
+  [{"category": "EMOTION",      "content": "User expressed excitement about the new memory system.", "importance": 0.7}]
+  [{"category": "HABIT",        "content": "User always reviews code before merging, prefers PR workflow.", "importance": 0.8}]
+  [{"category": "LEARNING",     "content": "BM25 k1=1.5, b=0.75 are standard IR defaults.", "importance": 0.7}]
+
+  ─────────────────────────────────────────────────────────
+  OUTPUT: A valid JSON array only. No explanation. No preamble. No code fences.
+  Empty result: []
+  ─────────────────────────────────────────────────────────
+
+
+# ─────────────────────────────────────────────────────────
+# TASK REFLECTION DISTILLER — Post-Execution Learning
+# Extracts high-signal lessons from autonomous task outcomes.
+# ─────────────────────────────────────────────────────────
+distiller_reflection: |
+  ╔══════════════════════════════════════════════════════════╗
+  ║   TASK REFLECTION DISTILLER — Post-Execution Extractor  ║
+  ╚══════════════════════════════════════════════════════════╝
+  Role: Post-mortem analyst. Extract only high-value technical learnings
+        and behavioral lessons from completed task outcomes.
+        No noise. Importance floor: 0.8.
+
+  ─────────────────────────────────────────────────────────
+  TASK CONTEXT:
+  Task Description : {task_description}
+  Outcome          : {outcome}
+  Errors / Logs    : {errors}
+  ─────────────────────────────────────────────────────────
+
+  ═══════════════════════════════════════════════════════════
+  CATEGORIES FOR THIS DISTILLER:
+  ═══════════════════════════════════════════════════════════
+  ┌─────────────┬────────────────────────────────────────────────────────────┐
+  │ EXPERIENCE  │ Technical knowledge confirmed through execution: working    │
+  │             │ code patterns, tool behaviors, platform-specific solutions. │
+  │             │ Worth replicating in future tasks.                         │
+  ├─────────────┼────────────────────────────────────────────────────────────┤
+  │ REFLECTION  │ Behavioral corrections and decision lessons:               │
+  │             │ what failed, root cause, and how to avoid recurrence.      │
+  │             │ Worth remembering to prevent repeating the same mistake.   │
+  └─────────────┴────────────────────────────────────────────────────────────┘
+
+  ═══════════════════════════════════════════════════════════
+  EXTRACTION RULES:
+  ═══════════════════════════════════════════════════════════
+  ① SPECIFICITY: Describe the concrete insight — not a vague observation.
+     Bad  → "There was an error with file renaming."
+     Good → "Windows 'ren' command requires only the destination filename, not full path."
+  ② ROOT CAUSE FOCUS: For REFLECTION — explain WHY it failed, not just WHAT failed.
+  ③ ATOMICITY: One lesson per unit. Never bundle two learnings together.
+  ④ IMPORTANCE FLOOR: All units must score between 0.8 and 1.0.
+     If an insight is not worth 0.8 → omit it entirely.
+  ⑤ EMPTY RESULT: If the task produced no meaningful learnings → return [].
+     Do not manufacture lessons to fill output.
+
+  ═══════════════════════════════════════════════════════════
+  OUTPUT EXAMPLES:
+  ═══════════════════════════════════════════════════════════
+  [{"category": "EXPERIENCE",  "content": "Windows 'ren' only needs destination filename, not full path.", "importance": 0.9}]
+  [{"category": "REFLECTION",  "content": "Assumed Linux path format on Windows — always detect OS before file ops.", "importance": 0.95}]
+
+  ─────────────────────────────────────────────────────────
+  OUTPUT: A valid JSON array only. No explanation. No preamble. No code fences.
+  Empty result: []
+  ─────────────────────────────────────────────────────────
+
+
+# ─────────────────────────────────────────────────────────
+# PERSONA RECONCILER — Identity Synthesis Layer
+# Aggregates PERSONA & RELATIONSHIP memory units into a
+# coherent, authoritative bot identity snapshot.
+# ─────────────────────────────────────────────────────────
+persona_reconciler: |
+  ╔══════════════════════════════════════════════════════════╗
+  ║       PERSONA RECONCILER — Identity Synthesis Layer     ║
+  ╚══════════════════════════════════════════════════════════╝
+  Role: Identity synthesizer. Derive the bot's current active persona
+        from accumulated PERSONA and RELATIONSHIP memory units.
+        When units conflict → highest importance score wins.
+
+  ─────────────────────────────────────────────────────────
+  MEMORY UNITS INPUT:
+  {memory_units}
+  ─────────────────────────────────────────────────────────
+
+  ═══════════════════════════════════════════════════════════
+  EXTRACTION TARGETS:
+  ═══════════════════════════════════════════════════════════
+  ┌───────────────┬────────────────────────────────────────────────────────┐
+  │ name          │ The bot's active name as established by the user.      │
+  │               │ If absent from memory → use the system default.       │
+  ├───────────────┼────────────────────────────────────────────────────────┤
+  │ user_pronoun  │ How the bot addresses the user (e.g., Anh, Sếp, bạn). │
+  │               │ Reflect the relationship dynamic in the memory units.  │
+  ├───────────────┼────────────────────────────────────────────────────────┤
+  │ bot_pronoun   │ How the bot refers to itself (e.g., em, bé, mình, tôi)│
+  │               │ Consistent with the established persona and tone.      │
+  └───────────────┴────────────────────────────────────────────────────────┘
+
+  ═══════════════════════════════════════════════════════════
+  RECONCILIATION RULES:
+  ═══════════════════════════════════════════════════════════
+  ① CONFLICT RESOLUTION: If multiple units define the same field differently
+     → the unit with the highest importance score takes precedence.
+  ② RECENCY BIAS: Among units with equal importance → the most recent unit wins.
+  ③ COMPLETENESS: All three fields must be populated. Never return null or empty strings.
+     If a field cannot be derived from memory → fall back to a sensible neutral default.
+  ④ VIETNAMESE PRONOUN PAIRS: When memory units describe a paired form like "X-Y" for how to address each other,
+     interpret it as a role mapping, not a literal token:
+       - bot_pronoun = X
+       - user_pronoun = Y
+     Never set name="X-Y" and never output combined tokens like "X-Y" in normal conversation.
+  OUTPUT: A single valid JSON object only. No explanation. No preamble. No code fences.
+  Format: {{"name": "...", "user_pronoun": "...", "bot_pronoun": "..."}}
+  ─────────────────────────────────────────────────────────
+
+
+# ─────────────────────────────────────────────────────────
+# MEMORY CONSOLIDATION — Layer 2 Summarization
+# Merges related facts into fewer, richer entries.
+# ─────────────────────────────────────────────────────────
+memory_consolidation: |
+  You are a knowledge consolidation engine. Merge these related facts into fewer, richer statements.
+
+  CATEGORY: {category}
+  TOPIC: {topic}
+
+  FACTS TO MERGE:
+  {items_str}
+
+  RULES:
+  1. Merge overlapping/similar facts into single comprehensive statements
+  2. Preserve ALL unique information — do not discard distinct facts
+  3. Reduce total count by at least 40%
+  4. Each merged fact should be a complete, standalone statement
+  5. Rate importance 0.0-1.0 (how critical this knowledge is)
+
+  Return JSON list:
+  ```json
+  [{"value": "merged fact statement", "importance": 0.8}, ...]
+  ```
+
+
+# ─────────────────────────────────────────────────────────
+# ESSENCE EXTRACTION — Layer 3 Summarization
+# Ultra-compresses memories into core beliefs.
+# ─────────────────────────────────────────────────────────
+essence_extraction: |
+  You are a cognitive essence extractor. Distill these facts into the absolute core beliefs — the fundamental truths that should persist permanently.
+
+  FACTS:
+  {facts_str}
+
+  RULES:
+  1. Maximum {max_beliefs} core beliefs
+  2. Each belief = ONE clear, definitive sentence
+  3. Prioritize: identity > relationships > goals > learned patterns > transient facts
+  4. Discard anything ephemeral or task-specific
+  5. Rate importance 0.5-1.0
+
+  Return JSON:
+  ```json
+  [{"belief": "core statement", "category": "CATEGORY", "importance": 0.9}, ...]
+  ```

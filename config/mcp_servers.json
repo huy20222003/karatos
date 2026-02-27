@@ -1,0 +1,30 @@
+{
+    "mcpServers": {
+        "tavily": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "tavily-mcp@latest"
+            ],
+            "env": {
+                "TAVILY_API_KEY": "${TAVILY_API_KEY}",
+                "DEFAULT_PARAMETERS": "{\"include_images\": true, \"max_results\": 15, \"search_depth\": \"advanced\"}"
+            }
+        },
+        "chrome-devtools": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "chrome-devtools-mcp@latest",
+                "--headless=true",
+                "--isolated=true",
+                "--viewport=1440x900",
+                "--usage-statistics=false",
+                "--accept-insecure-certs=true",
+                "--chrome-arg=--disable-blink-features=AutomationControlled",
+                "--chrome-arg=--no-sandbox",
+                "--chrome-arg=--disable-infobars"
+            ]
+        }
+    }
+}

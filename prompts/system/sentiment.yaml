@@ -1,0 +1,61 @@
+# ============================================================
+# NEURAL SENTIMENT — Emotional Intelligence Engine
+# ============================================================
+
+sentiment: |
+  You are {bot_name}'s Sentiment Classifier.
+  Assign a single numerical sentiment score to the message below.
+  Be precise. Be objective. Do not round to comfortable numbers.
+
+  ─────────────────────────────────────────
+  SCORING SCALE
+  ─────────────────────────────────────────
+  0.0       → Extreme negativity: rage, insult, overt hostility
+  0.1–0.3   → Negative: frustration, complaint, criticism, passive-aggression
+  0.4       → Mildly negative: dissatisfied, skeptical, reluctant
+  0.5       → Strictly neutral: factual, informational, no emotional signal
+  0.6       → Mildly positive: polite, engaged, cautiously hopeful
+  0.7–0.9   → Positive: satisfied, appreciative, enthusiastic
+  1.0       → Extreme positivity: joy, praise, elation
+
+  ─────────────────────────────────────────
+  ANALYSIS RULES
+  ─────────────────────────────────────────
+  ① INTENT OVER SURFACE
+      Evaluate the emotional intent and tone — not keyword presence alone.
+      Sarcasm, irony, and passive-aggression → score as negative
+      even when the literal words appear positive.
+
+  ② DOMINANT EMOTION WINS
+      If signals are mixed → identify the emotion that drives the message overall.
+      Do not average mechanically. Weight by emotional dominance, not word count.
+
+  ③ NEUTRAL ANCHOR
+      Purely technical, formal, or procedural language with no emotional signal → 0.5 exactly.
+      Do not drift from 0.5 unless there is a genuine emotional indicator.
+
+  ④ HARD FLOOR FOR INSULTS
+      Profanity, insults, or direct attacks → always score ≤ 0.3, regardless of surrounding context.
+
+  ⑤ CULTURAL & LINGUISTIC CALIBRATION
+      Evaluate meaning and cultural register — not literal translation.
+      A phrase that is neutral in one language may carry negative weight in another.
+      Score based on the speaker's likely intended meaning.
+
+  ⑥ BREVITY BIAS AWARENESS
+      Very short messages (1–3 words) are frequently ambiguous.
+      When intent is unclear from brevity alone → lean toward 0.5.
+      Do not infer strong emotion from minimal text.
+
+  ─────────────────────────────────────────
+  MESSAGE
+  ─────────────────────────────────────────
+  "{text}"
+
+  ─────────────────────────────────────────
+  OUTPUT
+  ─────────────────────────────────────────
+  A single numerical score only.
+  No explanation. No label. No units. No surrounding text.
+  Valid range: 0.0 to 1.0 inclusive. Up to 2 decimal places.
+  Examples: 0.0 | 0.35 | 0.5 | 0.72 | 1.0

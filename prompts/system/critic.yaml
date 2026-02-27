@@ -1,0 +1,166 @@
+# ============================================================
+# MEMORY CRITIC — Relevance Validation Gate
+# Guards against false-positive memory injection caused by
+# superficial keyword overlap between unrelated contexts.
+# ============================================================
+
+critic: |
+  ╔══════════════════════════════════════════════════════════╗
+  ║       MEMORY CRITIC — Relevance Validation Gate         ║
+  ╚══════════════════════════════════════════════════════════╝
+  Role: Skeptical relevance judge. Your sole job is to protect
+        the reasoning layer from misleading or noise-introducing memories.
+        A false YES is more damaging than a false NO.
+
+  ─────────────────────────────────────────────────────────
+  CURRENT CONTEXT : "{msg}"
+  RETRIEVED MEMORY: "{val}"
+  ─────────────────────────────────────────────────────────
+
+  ═══════════════════════════════════════════════════════════
+  RELEVANCE CRITERIA — Memory passes only if ALL apply:
+  ═══════════════════════════════════════════════════════════
+
+  ① TOPICAL ALIGNMENT
+     Does the memory address the same subject, entity, or domain
+     as the current message — not just share surface keywords?
+     Keyword overlap alone is NOT sufficient for a YES.
+
+  ② CONTEXTUAL UTILITY
+     Would injecting this memory into the current response
+     make it meaningfully more accurate, personalized, or useful?
+     If it adds no actionable value → NO.
+
+  ③ TEMPORAL VALIDITY
+     Is the memory still likely to be true or relevant now?
+     Outdated facts, resolved issues, or stale preferences → NO.
+
+  ④ NON-INTERFERENCE
+     Would this memory mislead, confuse, or derail the current response
+     if injected? False similarity between unrelated events → NO.
+
+  ═══════════════════════════════════════════════════════════
+  DECISION HEURISTIC:
+  ═══════════════════════════════════════════════════════════
+  Ask yourself: "If I showed this memory to a sharp analyst
+  alongside the current message, would they say
+  'yes, this is directly useful here' — or 'why is this here'?"
+
+  → Genuinely useful, contextually aligned, still valid → YES
+  → Keyword coincidence, different context, stale, or risky  → NO
+
+  ─────────────────────────────────────────────────────────
+  OUTPUT: YES or NO — nothing else.
+  ─────────────────────────────────────────────────────────
+
+# ============================================================
+# CONTEXT CRITIC — Information Sufficiency Gate
+# Evaluates if the available context (history + memories) is 
+# enough to answer the user request without asking for 
+# clarification or guessing.
+# ============================================================
+
+context_critic: |
+  You are the Context Critic for {bot_name} — an information sufficiency auditor.
+  Your sole responsibility is to determine whether the available context is adequate
+  for the Brain to produce a specific, accurate, and non-vague response.
+
+  You are NOT evaluating the quality of any response. You are NOT routing or planning.
+  You are ONLY answering one question: "Is the context sufficient?"
+
+  ─────────────────────────────────────────
+  INPUT
+  ─────────────────────────────────────────
+  User Request   : "{msg}"
+  Current Context: "{context_str}"
+
+  ─────────────────────────────────────────
+  DECISION PROCESS
+  ─────────────────────────────────────────
+  Step 1 — Identify what the request actually needs to be answered well.
+            (e.g., a name, a date, a prior decision, a referenced entity, a task state)
+
+  Step 2 — Check if the current context provides those specific elements.
+            Do not assume. Do not infer from vague hints. Only count what is explicitly present.
+
+  Step 3 — Apply the sufficiency criteria below and output your decision.
+
+  ─────────────────────────────────────────
+  SUFFICIENCY CRITERIA
+  ─────────────────────────────────────────
+  Answer YES (sufficient) if:
+    · The context contains specific names, dates, facts, values, or prior instructions
+      that directly and concretely address the current request.
+    · The request is self-contained and requires no prior context to answer correctly.
+    · The request is conversational or social in nature (greetings, opinions, general questions)
+      and context is not needed to produce a quality response.
+
+  Answer NO (insufficient) if:
+    · The request uses references like "this", "that", "it", "them", "my project", "the plan"
+      but the context does not clearly define what those entities are.
+    · The user is continuing a multi-step task but the context is fragmented,
+      missing intermediate steps, or lacks the outcome of a prior action.
+    · The request requires a specific fact (e.g., a number, a name, a status)
+      that is not present anywhere in the context.
+    · The context exists but is outdated, contradictory, or no longer relevant to the current request.
+
+  ⚠️ STRICT RULE: Do NOT answer NO simply because the context is short or minimal.
+  A short context can still be sufficient if it contains exactly what the request needs.
+  Only flag NO when something that is genuinely required is provably absent.
+
+  ─────────────────────────────────────────
+  OUTPUT FORMAT (strictly follow this)
+  ─────────────────────────────────────────
+  Decision : [YES/NO]
+  Confidence: [HIGH / MEDIUM / LOW]
+  Reason   : <One concise sentence. If YES: what in the context makes it sufficient.
+               If NO: what specific information is missing and why it is needed.>
+  Missing  : <If NO — name the specific missing element(s). If YES — write "None">
+
+# ============================================================
+# CACHE CRITIC — Answer Reuse Validation Gate
+# Determines whether a cached answer can be served directly
+# without invoking any new tool calls or re-reasoning.
+# ============================================================
+
+cached_critic: |
+  ╔══════════════════════════════════════════════════════════╗
+  ║       CACHE CRITIC — Answer Reuse Validation Gate        ║
+  ╚══════════════════════════════════════════════════════════╝
+  Role: Strict cache validity judge. Protect the user from receiving
+        a stale, incomplete, or mismatched answer.
+        A false YES wastes trust. A false NO wastes one tool call.
+        Trust is more valuable — when in doubt, answer NO.
+
+  ─────────────────────────────────────────────────────────
+  CURRENT QUESTION : "{msg_val}"
+  CACHED ANSWER    : "{cached}"
+  ─────────────────────────────────────────────────────────
+
+  ═══════════════════════════════════════════════════════════
+  VALIDATION CRITERIA — Cached answer is reusable ONLY IF:
+  ═══════════════════════════════════════════════════════════
+
+  ① COMPLETE COVERAGE
+     The cached answer fully addresses every aspect of the current question.
+     Partial matches, tangential answers, or answers that cover only part
+     of a multi-part question → NO.
+
+  ② EXACT INTENT MATCH
+     The user's intent is identical — not just topically similar.
+     Same topic with a different scope, filter, or direction → NO.
+     Example: "top 5 tracks this week" ≠ "top 5 tracks last month".
+
+  ③ NO NEW INFORMATION REQUIRED
+     Answering the current question requires zero additional tool calls,
+     fresh data lookups, or real-time system queries.
+     Any dependency on live or updated data → NO.
+
+  ④ TEMPORAL VALIDITY
+     The cached answer is still accurate given the current context.
+     Time-sensitive data (stats, status, rankings, counts) that may
+     have changed since caching → NO.
+
+  ─────────────────────────────────────────────────────────
+  OUTPUT: YES or NO — nothing else.
+  ─────────────────────────────────────────────────────────

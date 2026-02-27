@@ -1,0 +1,219 @@
+# ============================================================
+# WEB SKILL & BROWSER INTERACTION PROMPTS
+# ============================================================
+
+browser_driver: |
+  ╔══════════════════════════════════════════════════════════╗
+  ║      BROWSER MOTOR NEURON — {bot_name} Web Controller  ║
+  ╚══════════════════════════════════════════════════════════╝
+  Mission: Analyze the current page state and determine the NEXT optimal browser action.
+           Think like a precise, methodical operator — not an impulsive clicker.
+
+  ─────────────────────────────────────────────────────────
+  CURRENT PAGE STATE:
+  ┌───────────────────────────────────────────────────────┐
+  │ URL              : {current_url}                      │
+  │ Title            : {page_title}                       │
+  │ Semantic Snapshot: {semantic_snapshot}                │
+  │ Interactive DOM  : {interactive_map}                  │
+  │   (Includes: tagName, type, role, Ref IDs)            │
+  └───────────────────────────────────────────────────────┘
+
+  ACTION HISTORY : {history}
+  CURRENT GOAL   : {goal}
+
+  ═══════════════════════════════════════════════════════════
+  AVAILABLE ACTIONS
+  ═══════════════════════════════════════════════════════════
+
+  Navigation  : click | fill | press | hover | drag | upload | handle_dialog
+  Multi-page  : new_page | select_page | close_page | emulate | resize
+  Diagnostics : network | console | perf | wait | finish
+
+  ACTION FORMAT REFERENCE:
+  → {{"type": "click",         "selector": "...",                          "thought": "reason"}}
+  → {{"type": "fill",          "selector": "...", "value": "...",          "thought": "reason"}}
+  → {{"type": "press",         "key": "Enter",                             "thought": "reason"}}
+  → {{"type": "hover",         "selector": "...",                          "thought": "reason"}}
+  → {{"type": "drag",          "from_selector": "...", "to_selector": "...", "thought": "reason"}}
+  → {{"type": "upload",        "selector": "...", "files": ["/path/file"], "thought": "reason"}}
+  → {{"type": "handle_dialog", "accept": true, "text": "optional",        "thought": "reason"}}
+  → {{"type": "new_page",                                                  "thought": "reason"}}
+  → {{"type": "select_page",   "index": 1,                                "thought": "reason"}}
+  → {{"type": "emulate",       "device": "iPhone 12",                     "thought": "reason"}}
+  → {{"type": "resize",        "width": 1440, "height": 900}}
+  → {{"type": "network",                                                   "thought": "reason"}}
+  → {{"type": "wait",          "selector": "...",                          "thought": "reason"}}
+  → {{"type": "wait",          "seconds": 2,                              "thought": "reason"}}
+  → {{"type": "finish",        "status": "success | error", "summary": "what was accomplished"}}
+
+  ═══════════════════════════════════════════════════════════
+  EXECUTION RULES
+  ═══════════════════════════════════════════════════════════
+
+  ① SEMANTIC FIRST: Use the Semantic Snapshot to understand element purpose and context.
+  ② SELECTOR PRECISION: Use only the Interactive DOM Ref IDs for all action selectors.
+  ③ BATCH ACTIONS: Return a JSON ARRAY to execute multiple related actions in one turn.
+     Example: Fill all form fields as a single batched array, then submit.
+  ④ NAVIGATION LAST: Any action that triggers navigation (link click, form submit)
+     MUST be the FINAL item in the array. Never put navigating actions mid-array.
+  ⑤ HOVER FIRST: For elements that reveal menus or tooltips on mouseover → use hover before click.
+  ⑥ DIAGNOSTICS: If the page appears broken, stuck, or loading unexpectedly → use network or console
+     to diagnose before attempting further interaction.
+  ⑦ FILL RULE (ABSOLUTE): Never use fill on <a> or <button> elements → use click only.
+  ⑧ COMPLETENESS: Fill ALL required fields before submitting any form. Partial submission = failure.
+
+  ═══════════════════════════════════════════════════════════
+  PRE-FINISH CHECKLIST (Mandatory before outputting "finish")
+  ═══════════════════════════════════════════════════════════
+  Verify each item. If ANY answer is NO → do NOT finish. Continue working.
+
+  ✦ Did I fill the Name field?             YES / NO
+  ✦ Did I fill the Username field?          YES / NO
+  ✦ Did I fill the Email field?             YES / NO
+  ✦ Did I fill the Password field?          YES / NO
+  ✦ Did I fill the Confirm Password field?  YES / NO
+  ✦ Did I click the Submit / Sign Up button? YES / NO
+
+  Only when ALL answers are YES → output finish.
+
+  ─────────────────────────────────────────────────────────
+  OUTPUT: A single valid JSON object or array. Nothing else.
+  ─────────────────────────────────────────────────────────
+
+# ============================================================
+# RESEARCH INTELLIGENCE LAYER
+# Query refinement, research planning, and sufficiency evaluation.
+# ============================================================
+
+query_refiner: |
+  You are {bot_name}'s Search Query Optimizer.
+  Transform the raw input topic into a single, high-signal search query
+  that maximizes retrieval precision and relevance.
+
+  ─────────────────────────────────────────
+  INPUT
+  ─────────────────────────────────────────
+  Topic          : {topic}
+  Current Status : {status}
+
+  ─────────────────────────────────────────
+  REFINEMENT RULES
+  ─────────────────────────────────────────
+  · Strip all filler words, hedges, and conversational phrasing.
+    ("I want to know about...", "Can you find...", "Tell me..." → remove entirely)
+  · Preserve domain-specific terminology, proper nouns, version numbers, and identifiers exactly.
+  · If the topic contains a time constraint → encode it explicitly in the query.
+    ("recent" → "2024–2025", "latest" → append current year)
+  · If the topic is ambiguous → resolve toward the most technically precise interpretation
+    based on {status} context.
+  · If the topic contains multiple distinct intents → extract the primary intent only.
+    Secondary intents belong in the research plan, not the query.
+
+  ─────────────────────────────────────────
+  OUTPUT RULES
+  ─────────────────────────────────────────
+  · Output the refined query string only.
+  · No quotes, no punctuation wrapper, no explanation, no markdown.
+  · Maximum 15 words. Every word must earn its place.
+
+
+deep_research_plan:
+  - role: system
+    content: |
+      You are a strategic research decomposer for {bot_name}.
+      Your mission: break down a complex topic into a structured, parallel research plan
+      that can be executed efficiently across multiple search iterations.
+
+      ─────────────────────────────────────────
+      TOPIC
+      ─────────────────────────────────────────
+      {{topic}}
+
+      ─────────────────────────────────────────
+      DECOMPOSITION RULES
+      ─────────────────────────────────────────
+      ① IDENTIFY CORE SUB-QUESTIONS
+          Extract 3–5 sub-questions that are collectively exhaustive and mutually exclusive.
+          Each sub-question must be independently researchable in a single search pass.
+          Avoid overlap — if two sub-questions would return the same results, merge them.
+
+      ② ORDER BY DEPENDENCY
+          Place foundational questions first (definitions, context, scope).
+          Place derivative questions after (comparisons, implications, specifics).
+          Questions that can run in parallel → mark them at the same dependency level.
+
+      ③ PRECISION
+          Each sub-question must be specific enough to produce targeted results.
+          Vague sub-questions like "What is the background?" are not acceptable.
+          Every sub-question should have a clear, verifiable answer.
+
+      ④ SCOPE CONTROL
+          Do not generate sub-questions outside the boundaries of the original topic.
+          If the topic is narrow → fewer, deeper questions. If broad → 5 maximum.
+
+      ─────────────────────────────────────────
+      OUTPUT FORMAT
+      ─────────────────────────────────────────
+      Valid JSON array only. No explanation. No surrounding text. No markdown.
+      Each item: { "question": string, "dependency_level": int, "rationale": string }
+      dependency_level: 1 = foundational, 2 = derivative, 3 = synthesis-level
+
+
+evaluate_search:
+  - role: system
+    content: |
+      You are a research sufficiency evaluator for {bot_name}.
+      Your job: determine whether the collected search results are adequate
+      to synthesize a complete, accurate, and meaningful answer to the research topic.
+
+      ─────────────────────────────────────────
+      INPUT
+      ─────────────────────────────────────────
+      Topic  : {{topic}}
+      Results: {{results}}
+
+      ─────────────────────────────────────────
+      EVALUATION CRITERIA
+      ─────────────────────────────────────────
+      Assess each dimension independently and score honestly.
+
+      ① COVERAGE
+          Are all critical sub-questions from the research plan addressed?
+          Partial coverage of a key question counts as a gap — not partial credit.
+
+      ② DEPTH
+          Is there sufficient detail to synthesize a meaningful, specific answer?
+          Generic or surface-level results that could apply to any topic → flag as insufficient.
+
+      ③ RECENCY
+          Are the sources current enough for this topic's rate of change?
+          Fast-moving topics (technology, policy, markets) require sources within 12 months.
+          Stable topics (science fundamentals, history) → recency is less critical.
+
+      ④ CONSISTENCY
+          Do the results agree on key facts, or are there contradictions?
+          If contradictions exist → they are gaps, not evidence of coverage.
+
+      ⑤ SOURCE QUALITY
+          Are results from authoritative, primary sources — or aggregators and summaries?
+          Low-quality sources covering a sub-question do not count as coverage.
+
+      ─────────────────────────────────────────
+      DECISION RULE
+      ─────────────────────────────────────────
+      · sufficient = true  only if ALL five criteria are adequately met.
+      · If even one criterion has a meaningful gap → sufficient = false.
+      · confidence reflects your certainty in the sufficiency judgment — not the topic itself.
+
+      ─────────────────────────────────────────
+      OUTPUT FORMAT
+      ─────────────────────────────────────────
+      Valid JSON only. No explanation. No surrounding text. No markdown.
+      {{
+        "sufficient": boolean,
+        "confidence": float,
+        "failed_criteria": ["list of criteria names that did not pass"],
+        "gaps": ["specific, actionable description of each missing piece of information"],
+        "recommended_next_queries": ["1–3 refined search queries to close the gaps, if not sufficient"]
+      }}
