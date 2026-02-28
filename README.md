@@ -1,7 +1,7 @@
 # 🦂 Karatos: Scaling Brain Architecture (V2.6)
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/huy20222003/karatos/main/agent/karatos_scorpion_logo.png" width="300" alt="Karatos Scorpion">
+  <img src="https://raw.githubusercontent.com/huy20222003/karatos/master/karatos_scorpion_logo.png" width="300" alt="Karatos Scorpion">
 </p>
 
 > [!NOTE]
