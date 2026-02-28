@@ -115,8 +115,8 @@ async def chat_plan_node(state: ChatState) -> ChatState:
                              bot_name=getattr(settings, 'bot_name', 'SystemBot'),
                              my_username=my_username,
                              os_platform=os_platform,
-                             mood=state.get('mood', 'OPTIMISTIC'), 
-                             energy=f"{state.get('energy_level', 1.0)*100:.0f}%")
+                             energy=f"{state.get('energy_level', 1.0)*100:.0f}%",
+                             replan_context=state.get("replan_context") or "None")
 
     model = PlannerModel()
     # Use native tool calling for planning
@@ -145,6 +145,8 @@ async def chat_plan_node(state: ChatState) -> ChatState:
         state["current_step"] = 0
         state["task_outputs"] = []
         state["planning_thought"] = f"Created plan with {len(plan)} steps via Robust Tool Extraction."
+        # Clear replan context after planning
+        state["replan_context"] = None
         
     state["phase"] = "planned"
     return state

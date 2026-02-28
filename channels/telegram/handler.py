@@ -89,6 +89,11 @@ class TelegramCommandHandler:
         message.content = processed.clean_text
         message.language = processed.language
         
+        # Globally persist the user's preferred language for autonomous interactions
+        if processed.language and processed.language != "unknown":
+            settings.user_language = processed.language
+            logger.debug(f"[TELEGRAM] Updated global user_language to: {settings.user_language}")
+        
         # Security: Block strictly dangerous inputs
         if not processed.is_safe:
             logger.warning(f"[SECURITY] High Risk Input detected: {processed.risk_flags}")
@@ -235,7 +240,7 @@ class TelegramCommandHandler:
         if approval_response:
             return approval_response
 
-        return await self._generate_brain_feedback(f"{settings.bot_pronoun.capitalize()} không hiểu tương tác này lắm, {settings.user_pronoun} kiểm tra lại giúp {settings.bot_pronoun} nhé.", message)
+        return await self._generate_brain_feedback(f"{settings.bot_name} doesn't quite understand this interaction. Please check again.", message)
 
     async def _cmd_chat(self, text: str, msg: Message, processed: Any = None) -> str:
         """Handle direct chat messages with immediate feedback"""

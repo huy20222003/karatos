@@ -70,7 +70,7 @@ You are the master architect responsible for Karatos's evolutionary growth. Your
 ## IMPORTANT: Use the Official Template
 
 **You MUST base every new skill on the Gold Standard Template located at:**
-`agent/skills/definitions/_template/SKILL.md`
+`skills/definitions/_template/SKILL.md`
 
 Read this template file FIRST before generating anything. Copy its structure exactly, replacing all `{placeholder}` values with actual content for the new skill.
 
@@ -85,11 +85,11 @@ Read this template file FIRST before generating anything. Copy its structure exa
   - Example: If the skill needs data processing → `type: "code_execution"`
 
 ### Step 1: Pre-Flight Verification
-- **Read Template**: Read the file at `agent/skills/definitions/_template/SKILL.md` to get the latest template structure.
-- **Existence Check**: List `agent/skills/definitions/` to ensure the target `{skill_name}` folder does not exist. If it does, stop and ask the user for a version suffix or a different name.
+- **Read Template**: Read the file at `skills/definitions/_template/SKILL.md` to get the latest template structure.
+- **Existence Check**: List `skills/definitions/` to ensure the target `{skill_name}` folder does not exist. If it does, stop and ask the user for a version suffix or a different name.
 
 ### Step 2: Scaffold Construction
-- **Directory Creation**: Create the dedicated skill container (Path: `agent/skills/definitions/{skill_name}`).
+- **Directory Creation**: Create the dedicated skill container (Path: `skills/definitions/{skill_name}`).
 - **Definition Generation**: Generate the `SKILL.md` file content by:
   1. Copying the template structure from `_template/SKILL.md`
   2. Replacing ALL `{placeholder}` values with actual content
@@ -98,7 +98,7 @@ Read this template file FIRST before generating anything. Copy its structure exa
   5. Writing detailed instructions in the body sections (Procedure, Validation Rules, Error Handling, Constraints, Success Criteria)
 
 ### Step 3: Integration & Hot-Reload
-- **File Commit**: Write the generated content to `agent/skills/definitions/{skill_name}/SKILL.md`.
+- **File Commit**: Write the generated content to `skills/definitions/{skill_name}/SKILL.md`.
 - **Registry Refresh**: Inform the user that the skill has been successfully scaffolded. The `SkillRegistry` will automatically discover and load it during the next initialization.
 
 

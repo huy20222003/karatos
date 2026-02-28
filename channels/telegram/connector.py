@@ -110,15 +110,13 @@ class TelegramConnector:
             logger.error("[TelegramConnector] Failed to connect to Telegram.")
             return False
             
-        # 2. Send Startup Notification
+        # 1.5 Sync Identity back to Agent
+        self.agent.refresh_identity()
+            
+        # 2. Send Startup Notification (Brain-Powered)
         if self.admin_chat:
-            startup_msg = (
-                "✅ *Brain Online*\n\n"
-                "🤖 Agent is now running and listening for commands.\n\n"
-                "Type /help to see available commands."
-            )
-            await self.telegram.send(startup_msg, recipient=self.admin_chat)
-            logger.info(f"[TelegramConnector] Startup notification sent to Admin ({self.admin_chat})")
+            await self._send_brain_greeting()
+            logger.info(f"[TelegramConnector] Brain greeting sent to Admin ({self.admin_chat})")
             
         # 3. Register Identity with MCP Mailbox
         await self._register_identity()
@@ -159,6 +157,56 @@ class TelegramConnector:
             except Exception as e:
                 logger.error(f"[TelegramConnector] Loop iteration error: {e}")
                 await asyncio.sleep(10)
+
+    async def _send_brain_greeting(self):
+        """Generate and send a natural greeting using the Brain model."""
+        try:
+            from core.brain.model import BrainModel
+            from core.brain.prompts.registry import get_prompt_registry
+            from core.identity import AgentIdentity
+            
+            identity = AgentIdentity()
+            # Use current mood and energy if available, or defaults
+            mood = getattr(self.agent.brain, 'mood', 'OPTIMISTIC')
+            energy = getattr(self.agent.brain, 'energy_level', 1.0)
+            
+            import random
+            from datetime import datetime
+            current_time = datetime.now().strftime("%H:%M %A")
+            
+            from utils.language import language_for_prompt, normalize_language_code
+            lang_cfg = getattr(settings, "user_language", None) or "English"
+            language = language_for_prompt(normalize_language_code(lang_cfg, default="English"), default="English")
+            
+            prompt = get_prompt_registry().get(
+                "system.social_impulse.social_impulse",
+                bot_name=identity.name,
+                peer="Commander", # Addressing the admin
+                peer_type="Founder / Administrator",
+                mood=mood,
+                current_time=current_time,
+                impulse_type="STARTUP_GREETING",
+                source_material="I have just finished starting up and am ready to assist. I want to send a warm and professional greeting. IMPORTANT: Do NOT include any mentions, tags, or @ symbols (e.g., no @Commander). Just speak naturally.",
+                language=language,
+            )
+
+            model = BrainModel(mode="social")
+            response = await model.think(prompt, phase="startup", timeout=60.0)
+            
+            if response and response not in ["ERROR_TIMEOUT", "ERROR_FAILED"]:
+                from core.brain.utils import strip_thinking_tags
+                message = strip_thinking_tags(response).strip().strip('"').strip("'")
+                
+                # Append a small status indicator
+                message = f"🟢 {message}"
+                
+                await self.telegram.send(message, recipient=self.admin_chat)
+            else:
+                # Fallback to a simple message if brain fails
+                await self.telegram.send("✅ *System is ready.* I am online and awaiting your orders.", recipient=self.admin_chat)
+        except Exception as e:
+            logger.error(f"[TelegramConnector] Failed to send brain greeting: {e}")
+            await self.telegram.send("✅ Brain Online.", recipient=self.admin_chat)
 
     # _check_mailbox removed in Brain 2.6 in favor of Direct Agent RPC
 

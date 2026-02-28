@@ -39,6 +39,8 @@ class AgentState(TypedDict):
     
     goals: list[dict] # Autonomously proposed goals/tasks
     error: Optional[str] # Error message if something failed
+    replan_context: Optional[str] # Phase 36: LLM-based error analysis
+    retry_count: int               # Phase 36: Counter for self-healing loops
 
 
 class ChatState(TypedDict):
@@ -81,6 +83,8 @@ class ChatState(TypedDict):
     # Brain 2.1: Performance Optimization
     query_vector: Optional[list[float]] # Pre-computed embedding
     error: Optional[str]               # Error tracking
+    replan_context: Optional[str]      # Phase 36: LLM-based error analysis
+    retry_count: int                   # Phase 36: Counter for self-healing loops
     
     # Phase 15.4: Response Embedding for CIE Tier 2
     response_vector: Optional[list[float]]  # Computed after generation

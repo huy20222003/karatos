@@ -51,6 +51,7 @@ class BrainAgent:
         self._running = False
         self._cycle_count = 0
         self._last_patrol = None
+        self._last_patrol_time = datetime.utcnow() # Initialize to now to avoid immediate patrol
         self._actions_this_hour = 0
         self._hour_start = datetime.utcnow()
         
@@ -106,6 +107,13 @@ class BrainAgent:
             import traceback
             logger.error(traceback.format_exc())
             return False
+            
+    def refresh_identity(self):
+        """Update agent identity from settings (called after channel connection)"""
+        old_username = self.bot_username
+        self.bot_username = settings.bot_username or "default_bot"
+        if old_username != self.bot_username:
+            logger.info(f"[AGENT] Identity binding updated: @{old_username} -> @{self.bot_username}")
             
     async def run(self):
         """

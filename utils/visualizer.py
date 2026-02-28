@@ -190,8 +190,8 @@ class VisualEnhancer:
                 clean_headers = [clean_val(h) for h in headers]
                 clean_rows = [[clean_val(c) for c in r] for r in rows]
 
-                # Nếu dữ liệu chỉ có 1 cột (vd list đơn, dict 1 key, hoặc table 1 header)
-                # thì giữ nguyên dạng text, không tạo ảnh để tránh report "rỗng".
+                # If data only has 1 column (e.g. simple list, dict with 1 key, or table with 1 header)
+                # then keep it as text and don't generate an image to avoid "empty" reports.
                 non_empty_cols = [h for h in clean_headers if h]
                 if len(non_empty_cols) <= 1:
                     logger.debug("[VISUALIZER] Single-column data detected. Skipping image rendering, using text only.")

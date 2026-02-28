@@ -23,6 +23,14 @@ if sys.platform == "win32":
 # Suppress Polars/Arrow warning
 os.environ["POLARS_UNKNOWN_EXTENSION_TYPE_BEHAVIOR"] = "load_as_storage"
 os.environ["PYTHONUTF8"] = "1"
+
+# Environment optimizations to suppress warnings and speed up imports
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"          # Disable oneDNN custom operations warnings
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"           # Suppress TensorFlow logging (Errors only)
+os.environ["USE_TF"] = "0"                         # Force Transformers to NOT use TensorFlow
+os.environ["USE_TORCH"] = "1"                      # Force Transformers to use PyTorch
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"     # Only show errors from Transformers
+os.environ["PYTHONWARNINGS"] = "ignore"            # Ignore miscellaneous python warnings
 from channels.telegram.channel import TelegramChannel
 
 from pathlib import Path

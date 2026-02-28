@@ -108,22 +108,20 @@ class SpatialAwareness:
         self.base_path = base_path
         
     async def initialize(self):
-        """Load participants from persistent Markdown storage."""
+        """Load participants from persistent Vector memory."""
         try:
-            from utils.markdown_memory import MarkdownMemory
-            md_memory = MarkdownMemory(base_path=self.base_path)
+            from memory.persistent import get_memory, MemoryCategory
+            memory = get_memory()
             
-            # Use specific file for participant profiles
-            # In utils/markdown_memory.py, USER_HISTORY/profiles.md is used for "user_" keys
-            file_path = md_memory._get_file_path("USER_HISTORY", "spatial_participants")
-            
-            entries = md_memory.load_all_from_file(file_path)
-            for entry in entries:
+            # Use specific category for participant profiles
+            # In Vector mode, we search for entries with category USER_HISTORY and prefix 'participant:'
+            results = await memory.search("", category=MemoryCategory.USER_HISTORY, limit=200)
+            for entry in results:
                 if entry.key.startswith("participant:"):
                     p = Participant.from_dict(entry.value)
                     self._participants[p.username.lower()] = p
             
-            logger.info(f"[AWARENESS] Loaded {len(self._participants)} participants from {file_path}")
+            logger.info(f"[AWARENESS] Loaded {len(self._participants)} participants from VectorEngine")
         except Exception as e:
             logger.warning(f"[AWARENESS] Failed to load participants: {e}")
 
@@ -157,15 +155,14 @@ class SpatialAwareness:
         # Persist every 5 messages or if new
         if is_new or p.message_count % 5 == 0:
             try:
-                from utils.markdown_memory import MarkdownMemory, MarkdownMemoryEntry
-                md_memory = MarkdownMemory(base_path=self.base_path)
-                md_memory.append(MarkdownMemoryEntry(
+                from memory.persistent import get_memory, MemoryCategory
+                memory = get_memory()
+                await memory.remember(
                     key=f"participant:{key}",
-                    category="USER_HISTORY",
-                    importance=0.2,
-                    created_at=now,
-                    value=p.to_dict()
-                ))
+                    value=p.to_dict(),
+                    category=MemoryCategory.USER_HISTORY,
+                    importance=0.2
+                )
             except Exception as e:
                 logger.debug(f"[AWARENESS] Failed to persist participant {username}: {e}")
 

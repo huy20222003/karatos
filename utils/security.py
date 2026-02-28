@@ -275,7 +275,7 @@ class SecurityShield:
         "python", "python3", "pip", "pip3",
         "node", "npm", "npx", "yarn", "pnpm",
         "cargo", "rustc", "go", "java", "javac",
-        "dotnet", "ruby", "gem", "php", "composer",
+        "dotnet", "ruby", "gem", "php", "composer", "pytest",
         # ── Package Managers (info only) ──
         "apt list", "apt show", "apt search",
         "brew list", "brew info", "brew search",

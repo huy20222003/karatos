@@ -241,8 +241,12 @@ def route_chat(state: ChatState) -> Literal["plan", "generate", "prepare_step", 
         return "plan"
     return "generate"
 
-def should_continue_execution(state: ChatState) -> Literal["prepare_step", "generate"]:
-    """Decide whether to execute next step or finish"""
+def should_continue_execution(state: ChatState) -> Literal["prepare_step", "generate", "plan"]:
+    """Decide whether to execute next step, finish, or re-plan."""
+    if state.get("phase") == "replan_required":
+        logger.info("[SELF-HEALING] 🔄 Rerouting to Planner due to detected error.")
+        return "plan"
+    
     plan = state.get("plan", [])
     current_step = state.get("current_step", 0)
     

@@ -110,14 +110,20 @@ async def critic_node(state: AgentState) -> AgentState:
     
     state["thoughts"].append(f"Critic: {criticism.get('critique', 'No critique provided.')}")
     
-    if criticism.get("override") and criticism.get("suggested_action") != "APPROVED":
+    suggested_action = criticism.get("suggested_action", "APPROVED").upper()
+    
+    # NGO: Only force override if Critic suggested PENDING (Safety first).
+    # For IGNORE or ALERT, we trust the explicit 'override' flag.
+    should_override = criticism.get("override") or suggested_action == "PENDING"
+    
+    if should_override and suggested_action != "APPROVED":
         logger.warning(f"[CRITIC] OVERRIDE: {proposed_action} -> {criticism.get('suggested_action')}")
         logger.warning(f"[CRITIC] Reason: {criticism.get('suggested_reason')}")
         
         # Apply the override
         state["active_task"] = {
             "realm": decision.get("realm", "SYSTEM"), # Preserve or default realm
-            "action": criticism.get("suggested_action", "IGNORE"),
+            "action": suggested_action.lower(),
             "target_id": decision.get("target_id"),
             "target_type": decision.get("target_type"),
             "reason": criticism.get("suggested_reason", decision.get("reason")),

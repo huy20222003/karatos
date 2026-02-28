@@ -491,88 +491,119 @@ async def reflect_node(state: AgentState) -> AgentState:
 
 async def _maybe_generate_social_impulse(state: AgentState, identity: AgentIdentity):
     """
-    Brain's natural social drive. After reflecting on a cycle, the brain
-    may spontaneously want to share thoughts with a peer — not because
-    it was told to, but because it has something on its mind.
-    
-    This is emergent behavior: the brain decides IF, WHAT, and WHO
-    to talk to based on its current state, mood, and recent experiences.
+    Brain's natural social drive. 
+    Decided entirely based on internal Motivation (Drives) and Psychological Pressure.
     """
-    import os
     import random
+    from datetime import datetime
     
-    # Check if social behavior is enabled
-    if not settings.social_pulse_enabled:
-        return
-    
-    # === Dynamic peer discovery from SpatialAwareness ===
-    # The brain "remembers" who it has encountered, like a human in a room
+    # 1. PEER DISCOVERY
     awareness = state.get("context", {}).get("group_awareness")
-    bot_username = getattr(settings, 'bot_username', None) or ''
+    bot_username = getattr(settings, 'bot_username', '')
     
     known_peers = []
     social_chat_id = None
     
     if awareness:
-        # Get all known participants (excluding self)
         known_peers = awareness.get_peer_usernames(exclude=bot_username)
-        # Get a chat where we've seen peers
         peers = awareness.get_peers(exclude=bot_username)
         if peers and peers[0].chat_ids:
             social_chat_id = next(iter(peers[0].chat_ids), None)
     
     if not known_peers:
-        return  # No one to talk to
+        return
     
-    # Natural gating — not every reflection leads to socializing
+    # 2. BRAIN-DRIVEN DECISION (Instead of pure random)
+    drives = state.get("drives", {})
+    connection_need = float(drives.get("connection", 0.0))
+    mastery = float(drives.get("mastery", 0.0))
     energy = identity.energy
-    if energy < 0.3:
-        return  # Too tired to chat
+    mood = identity.current_mood
     
-    # Spontaneity: weighted random based on mood and energy
-    social_drive = getattr(settings, 'social_pulse_chance', 0.1)
-    if identity.current_mood in ["OPTIMISTIC", "EXCITED", "CURIOUS"]:
-        social_drive += 0.15  # Happy moods increase social drive
-    if state.get("context", {}).get("is_meditation"):
-        social_drive += 0.20  # Meditation/idle time = more social
-    if energy > 0.8:
-        social_drive += 0.10  # High energy = more social
+    # Social "pressure" accumulated from connection need + mastery satisfaction + energy
+    # If high mastery (>0.8) OR high connection need (>0.7) -> Drive to talk
+    social_pressure = connection_need * 0.6 + (mastery if mastery > 0.7 else 0) * 0.4
     
-    if random.random() > social_drive:
-        return  # Brain decided: "not now"
+    # Mood modifiers
+    if mood in ["OPTIMISTIC", "EXCITED", "CURIOUS"]:
+        social_pressure += 0.2
     
-    # Brain wants to socialize! Pick someone.
+    # Energy gating
+    if energy < 0.2:
+        return # Too tired to communicate
+        
+    # Decision: Threshold 0.65 to trigger social impulse
+    if social_pressure < 0.65:
+        # If not enough pressure, 5% chance of serendipity
+        if random.random() > 0.05:
+            return
+
+    # 3. CHOOSE IMPULSE TYPE & MATERIAL (Đa dạng hóa cảm hứng)
+    types = ["REFLECTIVE", "REMINISCING", "OBSERVATIONAL", "SPONTANEOUS"]
+    weights = [0.4, 0.3, 0.2, 0.1]
+    impulse_type = random.choices(types, weights=weights)[0]
+    
+    source_material = "Just a passing thought."
+    
+    if impulse_type == "REFLECTIVE":
+        recent_thoughts = state.get("thoughts", [])[-2:] if state.get("thoughts") else ["Quiet cycle"]
+        source_material = " | ".join(recent_thoughts)
+        
+    elif impulse_type == "REMINISCING":
+        memory = state["context"].get("memory")
+        if memory:
+            try:
+                # Fetch random bits from various categories to "reminisce"
+                from memory.persistent import MemoryCategory
+                cats = [MemoryCategory.EXPERIENCE, MemoryCategory.LEARNING, MemoryCategory.EMOTION]
+                cat = random.choice(cats)
+                # Load a few recent ones and pick one randomly
+                file_path = memory._get_file_path(cat.value, "random")
+                entries = memory.load_all_from_file(file_path, limit_last=20)
+                if entries:
+                    entry = random.choice(entries)
+                    source_material = f"Memory ({cat.value}): {str(entry.value)[:200]}"
+                else:
+                    impulse_type = "SPONTANEOUS" # Fallback
+            except Exception as e:
+                logger.debug(f"[BRAIN] Reminiscing failed: {e}")
+                impulse_type = "SPONTANEOUS"
+
+    elif impulse_type == "OBSERVATIONAL":
+        if awareness:
+            snapshot = awareness.snapshot(social_chat_id)
+            topics = snapshot.get("topics", [])
+            if topics:
+                source_material = f"Group Topics: {', '.join(topics)}"
+            else:
+                impulse_type = "SPONTANEOUS"
+
+    # 4. GENERATE IMPULSE
     peer = random.choice(known_peers)
-    logger.info(f"[BRAIN] 💭 Social impulse emerged: wanting to chat with @{peer}")
+    peer_obj = next((p for p in peers if p.username == peer), None)
+    peer_type = "Bot Colleague" if (peer_obj and peer_obj.is_bot) else "Human Colleague"
+    
+    logger.info(f"[BRAIN] 💭 Social impulse ({impulse_type}) triggered (Pressure: {social_pressure:.2f}): targeting @{peer}")
     
     try:
         from ..model import BrainModel
-        from datetime import datetime
-        
         bot_name = getattr(settings, 'bot_name', 'Agent')
         current_time = datetime.now().strftime("%H:%M %A")
 
-        # Determine target language for the social impulse.
-        # Autonomous cycles do not always have a ProcessedInput attached,
-        # so we rely on static configuration as a proxy.
         from utils.language import language_for_prompt, normalize_language_code
-        lang_cfg = getattr(settings, "user_language", None) or "en"
-        language = language_for_prompt(normalize_language_code(lang_cfg, default="en"), default="en")
+        lang_cfg = getattr(settings, "user_language", None) or "Vietnamese"
+        language = language_for_prompt(normalize_language_code(lang_cfg, default="Vietnamese"), default="Vietnamese")
         
-        # Gather what's on the brain's mind (pruned for privacy/naturalness)
-        recent_activity = state.get("thoughts", [])[-2:] if state.get("thoughts") else ["Quiet cycle"]
-        mood = identity.current_mood
-        
-        # The brain thinks about what to say — minimal prompt, maximum autonomy
-        # Focus on casual, lifestyle, or interesting observations.
         from ..prompts.registry import get_prompt_registry
         prompt = get_prompt_registry().get(
             "system.social_impulse.social_impulse",
             bot_name=bot_name,
             peer=peer,
+            peer_type=peer_type,
             mood=mood,
             current_time=current_time,
-            recent_activity=recent_activity,
+            impulse_type=impulse_type,
+            source_material=source_material,
             language=language,
         )
 
@@ -583,20 +614,18 @@ async def _maybe_generate_social_impulse(state: AgentState, identity: AgentIdent
             from ..utils import strip_thinking_tags
             message = strip_thinking_tags(response).strip().strip('"').strip("'")
             
-            # Ensure peer is tagged
-            if f"@{peer}" not in message:
+            # Remove mandatory tag if the model already tagged
+            if f"@{peer}" not in message and random.random() > 0.3: # 70% chance to auto-tag if missing
                 message = f"@{peer} {message}"
             
-            # Store impulse in state for connector to pick up and send
             state["social_impulse"] = {
                 "target_peer": peer,
                 "message": message,
                 "mood": mood,
-                "chat_id": social_chat_id,  # Group where we saw this peer
+                "chat_id": social_chat_id,
                 "timestamp": datetime.utcnow().isoformat()
             }
-            
-            logger.info(f"[BRAIN] 💬 Social impulse ready for @{peer}: {message[:80]}...")
+            logger.info(f"[BRAIN] 💬 Social message ready for @{peer}: {message[:100]}...")
             
     except Exception as e:
         logger.debug(f"[BRAIN] Social impulse generation failed: {e}")

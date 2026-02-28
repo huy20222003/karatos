@@ -53,7 +53,6 @@ async def main():
         ("SYSTEM", "execute", {"command": "dir" if os.name == 'nt' else "ls"}),
         ("SYSTEM", "health_check", {"check_type": "QUICK"}),
         ("SYSTEM", "clear_cache", {"scope": "SHORT_TERM"}),
-        ("SYSTEM", "coder", {"action": "LIST", "file_path": "."}),
         ("SYSTEM", "git_control", {}),
         ("WEB", "research", {"topic": "AI Agent security", "depth": "SEARCH"}),
         ("DATA", "dynamic_db", {"query": "liệt kê 3 user đầu tiên"}),

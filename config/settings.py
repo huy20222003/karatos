@@ -101,6 +101,15 @@ class Settings(BaseSettings):
     )
 
     # ===========================================
+    # Embedding Configuration (Neural Memory)
+    # ===========================================
+    memory_embedding_model: str = Field(
+        default="sentence-transformers/all-MiniLM-L6-v2",
+        description="Name of the local model to use for memory embeddings (sentence-transformers)",
+        alias="MEMORY_EMBEDDING_MODEL"
+    )
+
+    # ===========================================
     # OpenAI & Compatible Providers
     # ===========================================
     openai_api_key: Optional[str] = Field(
@@ -198,18 +207,12 @@ class Settings(BaseSettings):
         description="Require human approval for critical actions",
         alias="HUMAN_APPROVAL_REQUIRED"
     )
-    social_pulse_enabled: bool = Field(
-        default=True,
-        description="Enable/disable the brain's natural social drive",
-        alias="SOCIAL_PULSE_ENABLED"
-    )
-    social_pulse_chance: float = Field(
-        default=0.1,
-        description="Probability of triggering a social impulse (0.0 to 1.0)",
-        alias="SOCIAL_PULSE_CHANCE"
-    )
-    
     # --- Context Limits (Phase 21.5) ---
+    user_language: str = Field(
+        default="English",
+        description="The detected primary language of the user",
+        alias="USER_LANGUAGE"
+    )
     context_planning_limit: int = Field(
         default=20,
         description="Number of recent messages used for routing and planning",
@@ -243,12 +246,6 @@ class Settings(BaseSettings):
         default_factory=dict,
         description="Configuration for MCP Servers (command, args, env)",
         alias="MCP_SERVERS"
-    )
-    
-    mailbox_auth_token: str = Field(
-        default="niva-mailbox-dev-token-2026",
-        description="Authentication token for the Mailbox MCP server",
-        alias="MAILBOX_AUTH_TOKEN"
     )
     
     # ===========================================
@@ -350,8 +347,8 @@ class Settings(BaseSettings):
     # Dynamic Identity (Runtime)
     bot_name: str = "Karatos (Brain)"
     bot_username: Optional[str] = None
-    user_pronoun: str = "Anh"
-    bot_pronoun: str = "Em"
+    user_pronoun: str = "Boss"
+    bot_pronoun: str = "I"
     
     @property
     def telegram_admin_chat_id(self) -> Optional[str]:

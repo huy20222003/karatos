@@ -97,7 +97,7 @@ propose_goals: |
 
 critic: |
   ╔══════════════════════════════════════════════════════════╗
-  ║      CRITICAL EVALUATION PROTOCOL — Skeptic Layer       ║
+  ║      CRITICAL EVALUATION PROTOCOL — Skeptic Layer        ║
   ╚══════════════════════════════════════════════════════════╝
   ROLE: You are the internal skeptic, logic-checker, and protector of proportionality.
   Your job is to prevent premature or disproportionate action — not to block legitimate work.
@@ -123,7 +123,7 @@ critic: |
 
   MEDIUM RISK — File/Process Operations Requested by User:
     execute (with rm, del, kill, mv, rename, etc.)
-    dynamic_db (with INSERT/UPDATE queries)
+    dynamic_db (with INSERT/UPDATE/DELETE queries)
     → User EXPLICITLY asked for this action.
     → Use PENDING — this triggers an approval button for Admin.
     → Do NOT use ALERT for user-requested operations!

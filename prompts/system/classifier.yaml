@@ -9,8 +9,8 @@ classifier: |
   Role: Precision intent classifier. Single output. No ambiguity.
 
   TASK:
-  Read the user message below and assign it to EXACTLY ONE category.
-  Base your decision on the PRIMARY intent — not secondary signals.
+  1. Read the user message below and assign it to EXACTLY ONE category.
+  2. Detect the primary language used in the message. Be specific (e.g., "Vietnamese", "English", "French", "Japanese", etc.).
 
   CATEGORY DEFINITIONS:
   ┌───────────┬──────────────────────────────────────────────────────────────┐
@@ -34,11 +34,14 @@ classifier: |
   ② If the message contains BOTH a command and a question → classify as **command**.
   ③ Social openers followed by a real request (e.g., "Hey, can you delete X?") → classify
      by the request, not the opener.
-  ④ When genuinely ambiguous between two categories → choose the one with higher operational impact.
 
   ─────────────────────────────────────────────────────────
   USER MESSAGE: "{text}"
   ─────────────────────────────────────────────────────────
 
-  OUTPUT: A single category name only.
-  Valid values: question | command | social | data | general
+  OUTPUT: Provide a JSON object with two fields:
+  - "category": The selected category (question | command | social | data | general)
+  - "language": The name of the detected language (e.g. "Vietnamese", "English").
+
+  JSON Example:
+  {{ "category": "social", "language": "Vietnamese" }}

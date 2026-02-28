@@ -20,19 +20,12 @@ logger = get_logger()
 
 # ── Pre-compiled patterns ─────────────────────────────────────
 
-# ── Pre-compiled patterns ─────────────────────────────────────
-
-# Vietnamese character range heuristic
-_RE_VIET = re.compile(r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]")
-
-
-
 @dataclass
 class ProcessedInput:
     """Enriched input ready for the brain."""
     raw_text: str
     clean_text: str
-    language: str             # 'vi' | 'en' | 'mixed'
+    language: str             # Any language name Detected by Brain
     content_type: str         # 'question' | 'command' | 'social' | 'data' | 'general'
     token_estimate: int
     risk_score: float         # 0.0 – 1.0
@@ -125,13 +118,13 @@ class InputPipeline:
 
     @staticmethod
     def _fingerprint(text: str) -> dict:
-        """O(n) single-pass statistical analysis (language, scale, punctuation)."""
+        """O(n) single-pass statistical analysis (scale, punctuation, tokens)."""
         if not text:
             return {
                 "word_count": 0,
                 "char_count": 0,
                 "token_estimate": 0,
-                "language": "en",
+                "language": "unknown",
                 "has_question": False,
                 "punct_ratio": 0.0,
                 "digit_ratio": 0.0,
@@ -149,24 +142,14 @@ class InputPipeline:
         digits = sum(1 for c in text if c.isdigit())
         punct = sum(1 for c in text if not c.isalnum() and not c.isspace())
 
-        # Language detection (heuristic)
-        viet_chars = len(_RE_VIET.findall(text))
-        if viet_chars > 2 or (viet_chars > 0 and viet_chars / max(wc, 1) > 0.15):
-            lang = "vi"
-        elif viet_chars > 0:
-            lang = "mixed"
-        else:
-            lang = "en"
-
-        # Token estimate (~1.3 tokens per word for English, ~1.5 for Vietnamese)
-        token_mult = 1.5 if lang == "vi" else 1.3
-        token_est = int(wc * token_mult)
+        # Statistical Token estimate (~1.4 tokens per word average across languages)
+        token_est = int(wc * 1.4)
 
         return {
             "word_count": wc,
             "char_count": chars,
             "token_estimate": token_est,
-            "language": lang,
+            "language": "unknown", # Will be overridden by Neural Classifier
             "has_question": ("?" in text),
             "punct_ratio": punct / max(chars, 1),
             "digit_ratio": digits / max(chars, 1),
@@ -185,16 +168,18 @@ class InputPipeline:
         with task_timer("Neural Input Classification"):
             try:
                 from core.brain.model import BrainModel
-                from core.brain.utils import extract_json
+                from core.brain.utils import extract_json, strip_thinking_tags
                 classifier = BrainModel(mode="classifier")
                 # Pass text=text so it fills the placeholder in classifier.yaml
-                # We send a minimal placeholder for the HumanMessage to avoid double reporting.
                 raw_response = await classifier.think("Classify this.", text=text, mood="NEUTRAL", timeout=60.0)
                 
-                res = extract_json(raw_response)
+                # Cleanup thinking tags (Common in DeepSeek-R1 or similar thinking models)
+                clean_response = strip_thinking_tags(raw_response)
+                
+                res = extract_json(clean_response)
                 if isinstance(res, dict):
                     category = res.get("category", "general").lower()
-                    language = res.get("language", fp["language"]).lower()
+                    language = res.get("language", fp["language"]).title() # Title case for consistency
                     
                     # Basic validation of category
                     valid_categories = {"question", "command", "social", "data", "general"}

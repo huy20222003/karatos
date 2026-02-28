@@ -46,7 +46,7 @@ class ShortTermMemory:
         # List of dicts: {'vector': np.array, 'response': str, 'timestamp': float, 'query_text': str}
         self._cache: list[dict] = [] 
         self._cache_ttl = 3600 # 1 hour cache
-        self._similarity_threshold = 0.92 # High threshold for near-duplicates
+        self._similarity_threshold = 0.95 # High threshold for near-duplicates (Aligned with Vector Memory)
         
         # Track actions taken on specific targets (for cooldown)
         self._action_history: dict[str, list[datetime]] = {}

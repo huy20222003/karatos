@@ -76,7 +76,7 @@ async def chat_act_node(state: ChatState) -> ChatState:
                 "status": "pending",
                 "message": "APPROVAL_REQUIRED",
                 "details": d.get("reason", "Critic: Risk assessment requires manual verification."),
-                "command": d.get("params", {}).get("command") or d.get("original_action", "Unknown Action")
+                "command": d.get("params", {}).get("command") or d.get("params", {}).get("query") or d.get("original_action", "Unknown Action")
             }
             tasks.append(asyncio.sleep(0, result=pending_result))
             continue
@@ -198,24 +198,6 @@ async def chat_act_node(state: ChatState) -> ChatState:
                 command_str = str(result.get("command") or "Unknown Command")
                 reason = result.get("details", "Security policy requires manual verification for destructive or high-risk actions.")
                 
-                # 2. Inform the user in the main chat FIRST (to provide context above the buttons)
-                from channels.base import get_channel
-                
-                tg_channel = get_channel("telegram")
-                chat_id = state.get("context", {}).get("chat_id")
-                
-                if tg_channel and chat_id:
-                    from utils.notification import NotificationManager
-                    explanation = await NotificationManager.generate_body(
-                        (
-                            "Explain that a manual approval is required before executing a CLI command.\n"
-                            f"Command: `{command_str[:50] + ('...' if len(command_str) > 50 else '')}`\n"
-                            f"Reason: {reason}\n"
-                            "Ask the user to approve or deny using the buttons."
-                        ),
-                        language=user_lang,
-                    )
-                    await tg_channel.send(explanation, recipient=chat_id)
 
                 # 3. Trigger interactive approval buttons
                 from utils.notification import NotificationManager

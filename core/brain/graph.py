@@ -23,6 +23,7 @@ from core.brain.nodes.autonomous import reason_node, investigate_node, decide_no
 from core.brain.nodes.critic import critic_node
 from core.brain.nodes.context_critic import context_critic_node
 from core.brain.nodes.goal_proposer import propose_goals_node
+from core.brain.nodes.result_critic import result_critic_node
 
 logger = get_logger()
 
@@ -131,7 +132,9 @@ class Brain:
                 "mastery": 0.6,
             },
             "goals": [],
-            "error": None
+            "error": None,
+            "replan_context": None,
+            "retry_count": 0
         }
         logger.info("Starting Modular LangGraph thinking cycle...")
         try:
@@ -164,6 +167,7 @@ class Brain:
         graph.add_node("plan", chat_plan_node)
         graph.add_node("prepare_step", chat_prepare_step_node)
         graph.add_node("act", chat_act_node)
+        graph.add_node("result_critic", result_critic_node)
         graph.add_node("collect", chat_collect_result_node)
         graph.add_node("generate", chat_generate_node)
         graph.add_node("escalation", chat_escalation_node)
@@ -197,7 +201,8 @@ class Brain:
         graph.add_edge("prepare_step", "critic")
         graph.add_edge("critic", "act")
         
-        graph.add_edge("act", "collect")
+        graph.add_edge("act", "result_critic")
+        graph.add_edge("result_critic", "collect")
         
         # Loop Logic
         graph.add_conditional_edges(
@@ -205,7 +210,8 @@ class Brain:
             should_continue_execution, 
             {
                 "prepare_step": "prepare_step", 
-                "generate": "generate"
+                "generate": "generate",
+                "plan": "plan"
             }
         )
         
@@ -236,11 +242,12 @@ class Brain:
         query_vector = await engine.get_embedding(user_message)
         # -------------------------------------------
 
+        if context is None: context = {}
         initial_state: ChatState = {
             "chat_id": chat_id,
             "user_message": user_message,
             "chat_history": [],
-            "context": context or {},
+            "context": context,
             "query_vector": query_vector, 
             "thoughts": [],
             "response": "",
@@ -266,7 +273,9 @@ class Brain:
             "final_decision": None,
             "decision_history": [],
             "escalation_level": 0,
-            "episode_id": context.get("episode_id") or f"ep_{int(time.time())}"
+            "episode_id": context.get("episode_id") or f"ep_{int(time.time())}",
+            "replan_context": None,
+            "retry_count": 0
         }
         initial_state["response_vector"] = None 
         

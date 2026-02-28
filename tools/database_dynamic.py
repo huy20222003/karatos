@@ -48,7 +48,7 @@ RESTRICTED_COLUMNS = {
     "latitude", "longitude"
 }
 
-FORBIDDEN_KEYWORDS = {"DROP", "TRUNCATE", "ALTER", "GRANT", "REVOKE"}
+FORBIDDEN_KEYWORDS = {"DROP", "TRUNCATE", "ALTER", "GRANT", "REVOKE", "DELETE"}
 
 # Tool metadata for ToolRegistry auto-discovery
 TOOL_META = {
@@ -267,9 +267,17 @@ class DatabaseDynamic:
         clean_query = re.sub(r'/\*.*?\*/', '', query_upper, flags=re.DOTALL)
         clean_query = re.sub(r'--.*$', '', clean_query, flags=re.MULTILINE)
 
-        if any(kw in clean_query for kw in FORBIDDEN_KEYWORDS):
+        # NGO: Specialized check for DELETE - allow only if WHERE is present
+        if "DELETE" in clean_query:
+            if "WHERE" not in clean_query and "LIMIT" not in clean_query:
+                return {"status": "error", "data": [], "sql_executed": sql_to_execute, "row_count": 0,
+                        "message": "Mass DELETE without WHERE/LIMIT is strictly forbidden for safety."}
+        
+        # Other forbidden keywords (except DELETE which we guarded above)
+        other_forbidden = FORBIDDEN_KEYWORDS - {"DELETE"}
+        if any(kw in clean_query for kw in other_forbidden):
             return {"status": "error", "data": [], "sql_executed": sql_to_execute, "row_count": 0,
-                    "message": "Forbidden SQL keyword detected (DROP, TRUNCATE, ALTER, etc.)"}
+                    "message": f"Forbidden SQL keyword detected in query."}
 
         # Security Resolution Logic
         words = set(re.findall(r'\b\w+\b', clean_query.lower()))
@@ -281,9 +289,15 @@ class DatabaseDynamic:
                         "message": f"Access to restricted table '{table}' is forbidden by security policy."}
 
         # 3. UPDATE/DELETE SCALAR PROTECTION
-        if "UPDATE" in words and any(col in words for col in RESTRICTED_COLUMNS):
-            return {"status": "error", "data": [], "sql_executed": sql_to_execute, "row_count": 0,
-                    "message": "Updating sensitive columns is forbidden."}
+        is_mutation = "UPDATE" in words or "DELETE" in words
+        if is_mutation:
+            if "WHERE" not in clean_query and "LIMIT" not in clean_query:
+                return {"status": "error", "data": [], "sql_executed": sql_to_execute, "row_count": 0,
+                        "message": f"Bulk {words.intersection({'UPDATE', 'DELETE'})} operations must include a WHERE or LIMIT clause."}
+            
+            if "UPDATE" in words and any(col in words for col in RESTRICTED_COLUMNS):
+                return {"status": "error", "data": [], "sql_executed": sql_to_execute, "row_count": 0,
+                        "message": "Updating sensitive columns is forbidden."}
 
         try:
             # 4. Execute
@@ -322,8 +336,14 @@ class DatabaseDynamic:
                     
         except Exception as e:
             logger.error(f"[DYNAMIC_DB] Query execution failed: {e}")
+            # Add a diagnostic hint for self-healing if table is missing
+            error_msg = str(e)
+            hint = ""
+            if "relation" in error_msg and "does not exist" in error_msg:
+                hint = " (HINT: The table name might be slightly different or need a schema prefix. Check the schema summary.)"
+            
             return {"status": "error", "data": [], "sql_executed": sql_to_execute, "row_count": 0,
-                    "message": f"SQL execution error: {str(e)}"}
+                    "message": f"SQL execution error: {error_msg}{hint}"}
 
     @staticmethod
     def _looks_like_sql(query: str) -> bool:

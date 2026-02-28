@@ -181,10 +181,13 @@ class NotificationManager:
             
             message_body = await NotificationManager._generate_brain_body(
                 (
-                    "You must ask the administrator to APPROVE or DENY the following CLI command before execution.\n"
-                    f"Command: `{command}`\n"
-                    f"Reason: {reason}\n"
-                    "Explain clearly what this command will do and how to respond using the approval buttons."
+                    "The administrator needs to approve a sensitive operation.\n"
+                    f"Target Action/Command: `{command}`\n"
+                    f"Technical Justification: {reason}\n"
+                    "Your task: Create a concise, natural-sounding approval request in the required language. "
+                    "Integrate the action and the reason into a single professional message. "
+                    "Do not use dry labels like 'Technical Reason'. Instead, explain *why* this is happening and *what* it will do. "
+                    "Remind them to use 🚀 to Approve or 🚫 to Deny."
                 ),
                 lang_code
             )

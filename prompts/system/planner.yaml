@@ -22,8 +22,13 @@ planning_logic: |
 
   ═══════════════════════════════════════════════════════════
   INCOMING REQUEST:
-  ═══════════════════════════════════════════════════════════
   "{msg}"
+
+  ═══════════════════════════════════════════════════════════
+  SELF-HEALING CONTEXT (IMPORTANT):
+  ═══════════════════════════════════════════════════════════
+  Previous execution error analysis: {replan_context}
+  If replan_context is not "None", you MUST adjust your plan to avoid the previous error.
 
   ═══════════════════════════════════════════════════════════
   STRATEGIC PLANNING PRINCIPLES
