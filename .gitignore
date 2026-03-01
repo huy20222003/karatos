@@ -68,6 +68,9 @@ data/
 #docs
 docs/
 
+#tests
+tests/
+
 #scripts
 scripts/
 claude.bat
