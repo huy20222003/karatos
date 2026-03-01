@@ -73,6 +73,9 @@ TOOL_META = {
     "aliases": ["read_file", "read_document", "read_pdf", "read_excel", "read_csv", "read_code", "read_notebook"],
     "class_name": "FileReader",
     "description": f"File Reader: Extracts text and structural data from documents, notebooks, and source code. Supported extensions: {', '.join(sorted(SUPPORTED_EXTENSIONS.keys()))}",
+    "enabled": True,
+    "author": "Karatos Core",
+    "version": "1.0.0",
     "actions": [
         {
             "name": "read",
@@ -182,19 +185,34 @@ class FileReader:
 
     @staticmethod
     def _read_excel(file_path: str, **kwargs) -> str:
-        import pandas as pd
-        xls = pd.ExcelFile(file_path)
-        parts = []
-        for sheet in xls.sheet_names[:10]:  # Limit to 10 sheets
-            df = pd.read_excel(xls, sheet_name=sheet, nrows=500)
-            parts.append(f"--- Sheet: {sheet} ({len(df)} rows) ---\n{df.to_markdown(index=False)}")
-        return "\n\n".join(parts)
+        import polars as pl
+        from tabulate import tabulate
+        
+        # Polars reads excel. By default it might read all sheets or we can specify.
+        # To mimic pandas.ExcelFile behavior of listing sheets:
+        try:
+            # We use calamine engine for better performance and compatibility
+            dfs = pl.read_excel(file_path, sheet_id=None, engine="calamine")
+            parts = []
+            # dfs is a dict {sheet_name: df}
+            for i, (sheet, df) in enumerate(dfs.items()):
+                if i >= 10: break # Limit to 10 sheets
+                # Limit rows
+                df_sample = df.head(500)
+                parts.append(f"--- Sheet: {sheet} ({len(df)} rows) ---\n{tabulate(df_sample.to_dicts(), headers='keys', tablefmt='github')}")
+            return "\n\n".join(parts)
+        except Exception as e:
+            return f"Error reading Excel: {str(e)}"
 
     @staticmethod
     def _read_csv(file_path: str, **kwargs) -> str:
-        import pandas as pd
-        df = pd.read_csv(file_path, nrows=1000)
-        return f"CSV ({len(df)} rows, {len(df.columns)} columns):\n{df.to_markdown(index=False)}"
+        import polars as pl
+        from tabulate import tabulate
+        try:
+            df = pl.read_csv(file_path, n_rows=1000)
+            return f"CSV ({len(df)} rows, {len(df.columns)} columns):\n{tabulate(df.to_dicts(), headers='keys', tablefmt='github')}"
+        except Exception as e:
+            return f"Error reading CSV: {str(e)}"
 
     @staticmethod
     def _read_ipynb(file_path: str, **kwargs) -> str:

@@ -15,6 +15,9 @@ TOOL_META = {
     "name": "calendar_tool",
     "aliases": ["calendar", "schedule", "reminder", "check_reminders", "date", "time"],
     "class_name": "CalendarTool",
+    "enabled": True,
+    "author": "Karatos Core",
+    "version": "1.0.0",
     "description": "Calendar Tool: Creates, reads, and manages events and reminders. Uses local ICS/JSON storage.",
     "actions": [
         {

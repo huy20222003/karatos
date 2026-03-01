@@ -11,6 +11,9 @@ TOOL_META = {
     "name": "shell_executor",
     "aliases": ["execute", "bash", "shell", "terminal"],
     "class_name": "ShellExecutor",
+    "enabled": True,
+    "author": "Karatos Core",
+    "version": "1.0.0",
     "description": "System Shell Executor: Runs arbitrary shell commands on the host OS with security validation, timeout control, and output capture. The Brain decides what commands to use based on the OS platform.",
     "actions": [
         {

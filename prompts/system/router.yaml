@@ -15,7 +15,9 @@ routing_logic: |
   {intuition}
   {hint}
 
-  PEERS IN THIS CHAT: {peers}
+  RESIDENT INDEPENDENT AGENTS (Collaborators):
+  ═══════════════════════════════════════════════════════════
+  {peers}
 
   ═══════════════════════════════════════════════════════════
   STEP 0 — CONSCIOUSNESS CHECK (Layer 1: Metacognition)
@@ -39,7 +41,7 @@ routing_logic: |
   Filtering Logic (CRITICAL):
   ① PRIVATE CHAT HARD CONSTRAINT: If {peers} is "None" (Private Chat), you are the ONLY entity in the conversation. You MUST ALWAYS choose CHAT or PLAN. You are FORBIDDEN from choosing NONE in a private chat.
   ② Group Chat Logic: If {peers} is NOT "None", and the message primarily addresses another entity → you are NOT the actor. Being mentioned later as an object does NOT make you the subject.
-  ③ Delegation: If you need to tell or ask another bot something, route it to PLAN to use appropriate communication tools (e.g. Agent RPC).
+  ③ Delegation: If you need to collaborate with or task another independent agent, route it to PLAN. These agents have their own specialized capabilities and identities.
 
   ═══════════════════════════════════════════════════════════
   STEP 2 — ROUTING DECISION MATRIX
@@ -134,7 +136,7 @@ router_brief: |
   ═══════════════════════════════════════════════════════════
   CONTEXT SIGNALS:
   ═══════════════════════════════════════════════════════════
-  Co-workers in this chat : {peers}
+  Resident Independent Agents (Collaborators) : {peers}
   Intuition signal        : {intuition}
   Hint prediction         : {ppf_decision} {hint}
   Prior context           : {first_message}

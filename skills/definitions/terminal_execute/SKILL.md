@@ -1,5 +1,6 @@
 ---
 name: "terminal_execute"
+enabled: true
 version: "2.0"
 description: >
   Terminal Command Executor: Run shell commands on the host system.

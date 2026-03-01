@@ -1,5 +1,6 @@
 ---
 name: "research"
+enabled: true
 version: "2.0"
 description: >
   Web Intelligence Gatherer: Conduct depth-calibrated research from the open web.

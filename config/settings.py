@@ -4,7 +4,7 @@ Centralized configuration management using Pydantic Settings
 """
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
@@ -33,11 +33,6 @@ class Settings(BaseSettings):
     # ===========================================
     # LLM Ollama specialized models
     # ===========================================
-    ollama_embedding_model_name: str = Field(
-        default="nomic-embed-text",
-        description="Name of the embedding model in Ollama",
-        alias="OLLAMA_EMBEDDING_MODEL_NAME"
-    )
     ollama_vision_model_name: str = Field(
         default="llama3.2-vision",
         description="Name of the model in Ollama",
@@ -278,6 +273,30 @@ class Settings(BaseSettings):
         default="onboarding@resend.dev",
         description="Sender email for Resend",
         alias="RESEND_FROM_EMAIL"
+    )
+
+    # ===========================================
+    # Telegram Userbot Configuration
+    # ===========================================
+    telegram_api_id: Optional[int] = Field(
+        default=None,
+        description="Telegram API ID for Userbot",
+        alias="TELEGRAM_API_ID"
+    )
+    telegram_api_hash: Optional[str] = Field(
+        default=None,
+        description="Telegram API Hash for Userbot",
+        alias="TELEGRAM_API_HASH"
+    )
+    telegram_userbot_session: str = Field(
+        default="karatos",
+        description="Session name for Userbot",
+        alias="TELEGRAM_USERBOT_SESSION"
+    )
+    telegram_discovery_group_id: Optional[Union[str, int]] = Field(
+        default=None,
+        description="ID of the group to scan for peers",
+        alias="TELEGRAM_DISCOVERY_GROUP_ID"
     )
 
     def model_post_init(self, __context):

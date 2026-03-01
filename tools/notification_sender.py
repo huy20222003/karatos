@@ -5,6 +5,7 @@ Sends notifications across multiple channels: Telegram, Slack, Discord, generic 
 import asyncio
 from typing import Any, Dict, Optional
 
+from config.settings import settings
 from utils.logger import get_logger
 
 logger = get_logger()
@@ -14,6 +15,9 @@ TOOL_META = {
     "aliases": ["notify", "send_notification", "webhook"],
     "class_name": "NotificationSender",
     "description": "Notification Sender: Sends notifications via multiple channels (Telegram, Slack, Discord, webhooks).",
+    "enabled": True,
+    "author": "Karatos Core",
+    "version": "1.0.0",
     "actions": [
         {
             "name": "send",
@@ -69,11 +73,11 @@ class NotificationSender:
 
         try:
             import httpx
-            full_msg = f"**{title}**\n{message}" if title else message
+            full_msg = f"<b>{title}</b>\n{message}" if title else message
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                    json={"chat_id": target_chat, "text": full_msg, "parse_mode": "Markdown"},
+                    json={"chat_id": target_chat, "text": full_msg, "parse_mode": "HTML"},
                     timeout=15.0
                 )
                 data = resp.json()

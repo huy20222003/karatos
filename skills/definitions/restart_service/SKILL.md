@@ -1,5 +1,6 @@
 ---
 name: "restart_service"
+enabled: true
 version: "2.0"
 description: >
   Service Lifecycle Manager: Safely restart ecosystem components.

@@ -13,9 +13,12 @@ logger = get_logger()
 # Tool metadata for ToolRegistry auto-discovery
 TOOL_META = {
     "name": "browser_subagent",
+    "description": "Autonomous browser agent that can navigate sites, click elements, fill forms, and take screenshots.",
+    "author": "Karatos Core",
+    "version": "1.0.0",
+    "enabled": True,
     "aliases": ["browser", "browse"],
     "class_name": "BrowserAgent",
-    "description": "Browser Automation Agent: Controls a web browser via MCP Chrome DevTools to navigate pages, fill forms, click buttons, and extract data. Supports both scripted and autonomous modes.",
     "actions": [
         {
             "name": "browser_subagent",

@@ -58,7 +58,10 @@ class SkillRegistry:
     def _add_skill(self, path: str):
         try:
             skill = MarkdownSkill(path)
-            self.skills[skill.name.lower()] = skill
+            if skill.enabled:
+                self.skills[skill.name.lower()] = skill
+            else:
+                logger.info(f"[SkillRegistry] Skipping disabled skill: {skill.name}")
         except Exception as e:
             logger.error(f"[Registry] Failed to load skill at {path}: {e}")
 

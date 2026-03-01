@@ -14,7 +14,10 @@ TOOL_META = {
     "name": "document_summarizer",
     "aliases": ["summarize_document", "read_and_summarize"],
     "class_name": "DocumentSummarizer",
-    "description": "Document Summarizer: Reads a LOCAL document file (PDF, Word, TXT) and generates a concise summary. Use this ONLY for local paths, NOT for URLs (http/https).",
+    "description": "Chuyên gia tóm tắt: Xử lý file PDF, Word, và văn bản dài để trích xuất ý chính.",
+    "author": "Karatos Core",
+    "version": "1.1.0",
+    "enabled": True,
     "actions": [
         {
             "name": "summarize_document",

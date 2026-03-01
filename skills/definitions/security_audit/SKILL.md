@@ -1,5 +1,6 @@
 ---
 name: "security_audit"
+enabled: true
 version: "2.0"
 description: >
   Security Intelligence Reviewer: Surface and analyze security incidents from the audit trail.

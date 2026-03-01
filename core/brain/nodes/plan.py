@@ -92,11 +92,24 @@ async def chat_plan_node(state: ChatState) -> ChatState:
     # Use enriched capabilities for the final prompt injection
     skills_json = registry.get_enriched_capabilities()
     
-    # --- PEER AWARENESS: Use cached peer bot map (fetched once in parallel_startup) ---
-    peers_str = "None"
+    # --- PEER AWARENESS: Use cached peer bot map (Entity-based Brain 3.1) ---
+    my_name = (getattr(settings, 'bot_name', '') or '').lower()
+    my_username = (getattr(settings, 'bot_username', '') or '').lower().lstrip('@')
+    
+    peer_items = []
     peer_bot_map = state.get("context", {}).get("peer_bot_map", {})
-    if peer_bot_map:
-        peers_str = ", ".join([f"@{tag} ({name})" for name, tag in peer_bot_map.items()])
+    for name, data in peer_bot_map.items():
+        # Handle both legacy str and new dict format for robustness
+        tag = data.get("tag", f"@{name}") if isinstance(data, dict) else f"@{data}"
+        desc = data.get("description", "Independent Agent.") if isinstance(data, dict) else "Independent Agent."
+        
+        # Filter self
+        if name.lower() == my_name or tag.lower().lstrip('@') == my_username:
+            continue
+            
+        peer_items.append(f"{tag} ({name}): \"{desc}\"")
+    
+    peers_str = "; ".join(peer_items) if peer_items else "None"
 
     from core.brain.prompts.registry import get_prompt_registry
     p_registry = get_prompt_registry()

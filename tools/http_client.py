@@ -16,6 +16,9 @@ TOOL_META = {
     "aliases": ["http", "api_request", "rest"],
     "class_name": "HTTPClient",
     "description": "HTTP Client: Makes REST API requests (GET, POST, PUT, DELETE, PATCH) to external services. Supports JSON payloads, custom headers, authentication, and timeout controls.",
+    "enabled": True,
+    "author": "Karatos Core",
+    "version": "1.0.0",
     "actions": [
         {
             "name": "http_request",

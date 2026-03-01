@@ -1,5 +1,6 @@
 ---
 name: "navigate"
+enabled: true
 version: "2.0"
 description: >
   Autonomous Browser Operator: Physically interact with any website or web application.

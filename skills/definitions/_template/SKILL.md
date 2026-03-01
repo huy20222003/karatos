@@ -11,6 +11,7 @@
 # ============================================================
 
 name: "{skill_name}"
+enabled: true
 version: "1.0.0"
 author: "{author_name}"
 

@@ -1,5 +1,6 @@
 ---
 name: "clear_cache"
+enabled: true
 version: "2.0"
 description: >
   Agent Memory Optimizer: Clear volatile internal memory to restore peak cognitive performance.

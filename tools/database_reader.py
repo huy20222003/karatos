@@ -4,8 +4,6 @@ Direct read-only access to PostgreSQL database
 """
 import json
 import os
-import pandas as pd
-import polars as pl
 from typing import Any, Dict, List, Optional
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -23,6 +21,9 @@ TOOL_META = {
     "aliases": ["db_reader", "db_reports", "db_health"],
     "class_name": "DatabaseReader",
     "description": "Database Reports & Health: Direct access to PostgreSQL for system health, audit logs, user activity, and pre-defined administrative reports.",
+    "enabled": True,
+    "author": "Karatos Core",
+    "version": "1.0.0",
     "actions": [
         {
             "name": "db_reports",

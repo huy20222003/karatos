@@ -56,6 +56,9 @@ TOOL_META = {
     "aliases": ["dynamic_db", "db_query", "sql"],
     "class_name": "DatabaseDynamic",
     "description": "Dynamic Database Engine: Provides CRUD access to the PostgreSQL database with schema awareness, security guardrails, and SQL injection prevention.",
+    "enabled": True,
+    "author": "Karatos Core",
+    "version": "1.0.0",
     "actions": [
         {
             "name": "dynamic_db",

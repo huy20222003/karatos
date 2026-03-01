@@ -15,6 +15,9 @@ TOOL_META = {
     "name": "audio_processor",
     "aliases": ["audio", "transcribe", "speech_to_text", "voice"],
     "class_name": "AudioProcessor",
+    "enabled": True,
+    "author": "Karatos Core",
+    "version": "1.0.0",
     "description": "Audio Processor: Transcribes voice messages and audio files to text using Whisper speech recognition.",
     "actions": [
         {

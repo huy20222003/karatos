@@ -1,5 +1,6 @@
 ---
 name: "git_control"
+enabled: true
 version: "2.0"
 description: >
   Git Version Control Manager: Perform Git operations for external repositories.

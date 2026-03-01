@@ -15,7 +15,10 @@ TOOL_META = {
     "name": "email_client",
     "aliases": ["email", "send_email", "mail"],
     "class_name": "EmailClient",
-    "description": "Email Client: Sends emails via Resend API. Supports HTML, professional templating, and attachments.",
+    "description": "Professional Communications: Send/read emails and manage IMAP/SMTP accounts.",
+    "author": "Karatos Core",
+    "version": "1.0.0",
+    "enabled": True,
     "actions": [
         {
             "name": "send_email",

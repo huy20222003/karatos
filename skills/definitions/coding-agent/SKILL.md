@@ -1,5 +1,6 @@
 ---
 name: "coding_agent"
+enabled: true
 version: "2.0"
 description: >
   Advanced Code Development Agent: Full-stack coding assistant for complex multi-file

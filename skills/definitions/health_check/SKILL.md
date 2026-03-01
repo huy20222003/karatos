@@ -1,5 +1,6 @@
 ---
 name: "health_check"
+enabled: true
 version: "2.0"
 description: >
   System Diagnostics Engine: Perform comprehensive health checks across all infrastructure components.

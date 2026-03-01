@@ -16,6 +16,9 @@ TOOL_META = {
     "aliases": ["vision", "read_image", "ocr", "describe_image"],
     "class_name": "VisionReader",
     "description": "Vision Reader: Analyzes images using AI vision models. Can extract text (OCR), describe visual content, and answer questions about images.",
+    "enabled": True,
+    "author": "Karatos Core",
+    "version": "1.0.0",
     "actions": [
         {
             "name": "analyze_image",

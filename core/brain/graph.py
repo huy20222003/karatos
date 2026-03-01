@@ -435,7 +435,7 @@ class Brain:
                 await channel.send(response, recipient=chat_id, reply_to=reply_to)
                 logger.info(f"[MONITOR] Plan execution complete for {chat_id}")
                 
-                # --- NGO FIX: A2A Mailbox dropping for Background Tasks ---
+                # --- INTER-AGENT MESSAGING (Brain 3.0) ---
                 try:
                     resp_text = ""
                     if isinstance(response, str):
@@ -456,14 +456,14 @@ class Brain:
                             
                             for m in mentions:
                                 if m.lower() != my_username.lower():
-                                    peer_name = m.lstrip('@').lower()
-                                    await bridge.execute(f"peer:{peer_name}:receive_message", {
+                                    agent_name = m.lstrip('@').lower()
+                                    await bridge.execute(f"agent:{agent_name}:receive_message", {
                                         "sender": my_username,
                                         "message": resp_text,
                                         "chat_id": str(chat_id)
                                     })
                 except Exception as e:
-                    logger.error(f"[MONITOR] A2A drop failed in background: {e}")
+                    logger.error(f"[MONITOR] Inter-Agent message failed in background: {e}")
         except Exception as e:
             logger.error(f"[MONITOR] Background execution failed: {e}")
             await channel.send(f"❌ Niva encountered an issue during execution: {str(e)}", recipient=chat_id)

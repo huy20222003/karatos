@@ -16,7 +16,10 @@ TOOL_META = {
     "name": "process_monitor",
     "aliases": ["ps", "processes"],
     "class_name": "ProcessMonitor",
-    "description": "Process Monitor: Inspects running processes, checks system resource usage (CPU, RAM, disk), and manages service status. Use this ONLY for technical system metrics, NOT for current time or date.",
+    "description": "System Watchdog: Monitor running processes, check port availability, and sysadmin tasks.",
+    "author": "Karatos Core",
+    "version": "1.0.0",
+    "enabled": True,
     "actions": [
         {
             "name": "get_system_stats",

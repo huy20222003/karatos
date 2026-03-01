@@ -68,6 +68,11 @@ class ToolRegistry:
                 meta = getattr(module, "TOOL_META", None)
                 
                 if meta and isinstance(meta, dict):
+                    # Check if tool is enabled
+                    if not meta.get("enabled", False):
+                        logger.info(f"[ToolRegistry] Skipping disabled tool: {module_name}")
+                        continue
+
                     tool_name = meta.get("name", module_name)
                     
                     # Find the handler class (class with execute method)
@@ -210,16 +215,15 @@ class ToolRegistry:
                 logger.error(f"[ToolRegistry] Dispatch error for '{clean_action}': {e}")
                 return {"status": "error", "message": f"Tool execution failed: {str(e)}"}
 
-        # ─── 2. PEER RPC (Brain 2.6: Direct Agent-to-Agent communication) ───
-        if clean_action.startswith("peer:"):
-            peer_name = clean_action.split(":", 1)[1]
+        # ─── 2. AGENT MESSAGING (Direct Agent-to-Agent communication) ───
+        if clean_action.startswith("agent:"):
+            agent_name = clean_action.split(":", 1)[1]
             bridge = self.get_mcp_bridge()
             if bridge:
-                logger.info(f"[ToolRegistry] Routing Peer RPC: {clean_action}")
-                # We reuse the MCP bridge but with a special 'peer_rpc' directive
-                # The bridge will know how to translate 'peer_name' to an endpoint
-                return await bridge.execute(f"peer:{peer_name}:receive_message", clean_params)
-            return {"status": "error", "message": "MCP Bridge not available for Peer RPC."}
+                logger.info(f"[ToolRegistry] Routing Agent Messaging: {clean_action}")
+                # The bridge handles translating 'agent_name' to a message or RPC call
+                return await bridge.execute(f"agent:{agent_name}:receive_message", clean_params)
+            return {"status": "error", "message": "MCP Bridge not available for Agent Messaging."}
 
         # ─── 3. MCP BRIDGE (for mcp:server:tool format) ───
         if ":" in clean_action:
@@ -240,31 +244,64 @@ class ToolRegistry:
         Invoke a handler's execute method uniformly.
         Handles both class methods and wrapped functions.
         """
-        # Remove our internal routing key before passing to tool
-        dispatched_action = params.pop("_dispatched_action", "")
+        # Get the internal routing key
+        dispatched_action = params.get("_dispatched_action", "")
         
         # Check if handler needs instantiation
         if inspect.isclass(handler):
-            # Check for classmethod execute (most tools use this)
             execute_method = getattr(handler, "execute", None)
+            if not execute_method:
+                # If wrapped function class
+                execute_method = handler.execute
+        else:
+            execute_method = handler if callable(handler) else getattr(handler, "execute", None)
+
+        if not execute_method or not callable(execute_method):
+            return {"status": "error", "message": f"Handler {handler} has no callable execute method."}
+
+        try:
+            sig = inspect.signature(execute_method)
+            has_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
             
-            if execute_method:
-                # Determine if it's a classmethod/staticmethod or instance method
+            # Build target params
+            target_params = {}
+            for name, value in params.items():
+                if name in sig.parameters or has_kwargs:
+                    target_params[name] = value
+            
+            # Special logic for routing information: 
+            # If tool expects 'action' but it's not in params (or is empty), 
+            # fill it with dispatched_action
+            if "action" in sig.parameters and not target_params.get("action"):
+                target_params["action"] = dispatched_action
+
+            # Final check: if 'action' is a required positional argument but missing, 
+            # we MUST provide it to avoid TypeError
+            param_list = list(sig.parameters.values())
+            # Skip 'self' or 'cls' for bound methods
+            if inspect.ismethod(execute_method):
+                param_list = param_list # inspect.signature already excludes 'self'/'cls' for bound methods
+            
+            # Check for missing required positional args
+            for p in param_list:
+                if p.name == "action" and p.default == inspect.Parameter.empty and "action" not in target_params:
+                    target_params["action"] = dispatched_action
+
+            # Determine whether to call as class/static or instance
+            is_bound = inspect.ismethod(execute_method)
+            
+            if inspect.isclass(handler) and not is_bound:
                 if isinstance(inspect.getattr_static(handler, "execute"), (classmethod, staticmethod)):
-                    return await execute_method(**params)
+                    return await execute_method(**target_params)
                 else:
-                    # Instance method — instantiate first
                     instance = handler()
-                    return await instance.execute(**params)
-            else:
-                # Handler is a wrapped function class
-                return await handler.execute(**params)
-        
-        # Direct callable
-        if callable(handler):
-            return await handler(**params)
-        
-        return {"status": "error", "message": f"Handler {handler} is not callable."}
+                    return await instance.execute(**target_params)
+            
+            return await execute_method(**target_params)
+
+        except Exception as e:
+            logger.error(f"[ToolRegistry] Execution failed in handler: {e}")
+            raise
 
     # ──────────────────────────────────────────────
     # SCHEMA & CAPABILITY QUERIES
@@ -324,19 +361,20 @@ class ToolRegistry:
             except Exception as e:
                 logger.warning(f"[ToolRegistry] Failed to fetch MCP tools: {e}")
             
-            # 2. Brain 2.6: Dynamic Peer Bots as Tools
+            # 2. Dynamic Agent Discovery
             try:
-                peer_bots = await bridge.get_peer_registry()
-                for bot_name, bot_tag in peer_bots.items():
+                agents = await bridge.get_agent_registry()
+                for agent_name, agent_data in agents.items():
                     # Skip self
                     from config.settings import settings
-                    if bot_tag.lower().lstrip('@') == (settings.bot_username or "").lower().lstrip('@'):
+                    tag = agent_data.get("tag", "")
+                    if tag.lower().lstrip('@') == (settings.bot_username or "").lower().lstrip('@'):
                         continue
                         
-                    # Add peer as a high-level tool
+                    # Add agent as a high-level tool
                     schemas.append({
-                        "name": f"peer:{bot_name.lower()}",
-                        "description": f"Directly communicate with @{bot_tag.lstrip('@')} ({bot_name}). Use for planning and coordination.",
+                        "name": f"agent:{agent_name.lower()}",
+                        "description": f"Directly communicate with {tag} ({agent_name}). Use for planning and coordination.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -344,10 +382,10 @@ class ToolRegistry:
                             },
                             "required": ["message"]
                         },
-                        "tool_source": "mcp_peer_rpc"
+                        "tool_source": "mcp_agent_messaging"
                     })
             except Exception as e:
-                logger.debug(f"[ToolRegistry] Failed to fetch peer bots: {e}")
+                logger.debug(f"[ToolRegistry] Failed to fetch agent bots: {e}")
         
         return schemas
 

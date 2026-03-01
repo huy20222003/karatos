@@ -1,8 +1,9 @@
 ---
 name: "skill_generator"
+enabled: true
 description: >
-  Professional Capability Architect: Provides the GOLD STANDARD template and procedural 
-  instructions for scaffolding new skills. Use this skill FIRST to get the definition, 
+  Professional Capability Architect: Provides the GOLD STANDARD template and procedural
+  instructions for scaffolding new skills. Use this skill FIRST to get the definition,
   THEN use system commands to actually create the folder and file.
 routing_examples:
   - '"Create a new skill for automating Slack report generation" -> PLAN (Scaffold new capability)'
@@ -94,8 +95,9 @@ Read this template file FIRST before generating anything. Copy its structure exa
   1. Copying the template structure from `_template/SKILL.md`
   2. Replacing ALL `{placeholder}` values with actual content
   3. Filling in the YAML frontmatter (name, description, routing_examples, inputs, outputs, required_capabilities, tags)
-  4. **Populating `required_capabilities`** from the tools discovered in Step 0
-  5. Writing detailed instructions in the body sections (Procedure, Validation Rules, Error Handling, Constraints, Success Criteria)
+  4. **Setting `enabled: true`** in the frontmatter by default so the new skill is active.
+  5. **Populating `required_capabilities`** from the tools discovered in Step 0
+  6. Writing detailed instructions in the body sections (Procedure, Validation Rules, Error Handling, Constraints, Success Criteria)
 
 ### Step 3: Integration & Hot-Reload
 - **File Commit**: Write the generated content to `skills/definitions/{skill_name}/SKILL.md`.

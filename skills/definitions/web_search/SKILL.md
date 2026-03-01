@@ -1,5 +1,6 @@
 ---
 name: "web_search"
+enabled: true
 version: "2.0"
 description: >
   Information Retrieval Engine: Search the web for quick facts, prices, news, or general knowledge.

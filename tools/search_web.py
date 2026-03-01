@@ -15,6 +15,9 @@ TOOL_META = {
     "aliases": ["web_search", "search", "google"],
     "class_name": "WebSearch",
     "description": "Web Search Engine: Performs web searches using multiple engines (DuckDuckGo, Google, Bing) with automatic fallback. Returns search results with titles, URLs, and snippets.",
+    "enabled": True,
+    "author": "Karatos Core",
+    "version": "1.0.0",
     "actions": [
         {
             "name": "search_web",

@@ -35,6 +35,7 @@ class MarkdownSkill:
                 self.metadata = yaml.safe_load(frontmatter_match.group(1))
                 self.name = self.metadata.get("name", os.path.basename(os.path.dirname(self.file_path)))
                 self.description = self.metadata.get("description", "")
+                self.enabled = self.metadata.get("enabled", False)
             except yaml.YAMLError as e:
                 logger.error(f"[MarkdownSkill] Error parsing frontmatter in {self.file_path}: {e}")
         

@@ -182,7 +182,7 @@ class NotificationManager:
             message_body = await NotificationManager._generate_brain_body(
                 (
                     "The administrator needs to approve a sensitive operation.\n"
-                    f"Target Action/Command: `{command}`\n"
+                    f"Target Action/Command: <code>{command}</code>\n"
                     f"Technical Justification: {reason}\n"
                     "Your task: Create a concise, natural-sounding approval request in the required language. "
                     "Integrate the action and the reason into a single professional message. "
@@ -192,7 +192,7 @@ class NotificationManager:
                 lang_code
             )
 
-            return await channel.send(message_body, recipient=channel.admin_chat_id, keyboard=keyboard)
+            return await channel.send(message_body, recipient=channel.admin_chat_id, keyboard=keyboard, parse_mode="HTML")
         else:
             return await channel.ask_confirmation(
                 f"Approval Required: {command}\nReason: {reason}",

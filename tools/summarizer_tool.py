@@ -15,6 +15,9 @@ TOOL_META = {
     "aliases": ["summarizer", "summarize", "tldr"],
     "class_name": "SummarizerTool",
     "description": "Summarizer: Condenses long text, articles, or documents into concise summaries with key insights.",
+    "enabled": True,
+    "author": "Karatos Core",
+    "version": "1.0.0",
     "actions": [
         {
             "name": "summarize",

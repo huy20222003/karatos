@@ -14,9 +14,12 @@ logger = get_logger()
 
 TOOL_META = {
     "name": "data_analyzer",
+    "description": "Professional Data Scientist: Deep analysis of CSV/Excel/JSON data using Pandas/NumPy.",
+    "author": "Karatos Core",
+    "version": "1.0.0",
+    "enabled": True,
     "aliases": ["analyze_data", "statistics", "chart"],
     "class_name": "DataAnalyzer",
-    "description": "Data Analyzer: Performs statistical analysis and creates charts from structured data (JSON, CSV, query results).",
     "actions": [
         {
             "name": "analyze_data",
@@ -48,20 +51,21 @@ class DataAnalyzer:
                       x_column: str = "", y_column: str = "",
                       title: str = "", **kwargs) -> Dict[str, Any]:
         """Analyze data and optionally create charts."""
-        import pandas as pd
+        import polars as pl
 
         # 1. Load data
         try:
             if file_path and os.path.exists(file_path):
                 ext = os.path.splitext(file_path)[1].lower()
                 if ext == ".csv":
-                    df = pd.read_csv(file_path, nrows=10000)
+                    df = pl.read_csv(file_path, n_rows=10000)
                 elif ext in [".xlsx", ".xls"]:
-                    df = pd.read_excel(file_path, nrows=10000)
+                    # Using calamine engine for better compatibility
+                    df = pl.read_excel(file_path, engine="calamine")
                 else:
                     return {"status": "error", "message": f"Unsupported file type: {ext}"}
             elif data:
-                df = pd.DataFrame(data)
+                df = pl.from_dicts(data)
             else:
                 return {"status": "error", "message": "No data provided. Supply 'data' array or 'file_path'."}
         except Exception as e:
@@ -73,21 +77,24 @@ class DataAnalyzer:
         if analysis_type == "summary":
             try:
                 summary = {
-                    "shape": {"rows": len(df), "columns": len(df.columns)},
-                    "columns": list(df.columns),
-                    "dtypes": {col: str(dtype) for col, dtype in df.dtypes.items()},
-                    "missing_values": df.isnull().sum().to_dict(),
+                    "shape": {"rows": df.height, "columns": df.width},
+                    "columns": df.columns,
+                    "dtypes": {col: str(dtype) for col, dtype in zip(df.columns, df.dtypes)},
+                    "missing_values": {col: count for col, count in zip(df.columns, df.null_count().row(0))},
                     "numeric_summary": {}
                 }
-                numeric_cols = df.select_dtypes(include=["number"]).columns
-                if len(numeric_cols) > 0:
-                    desc = df[numeric_cols].describe().to_dict()
-                    summary["numeric_summary"] = {
-                        col: {k: round(v, 4) if isinstance(v, float) else v for k, v in stats.items()}
-                        for col, stats in desc.items()
-                    }
+                
+                numeric_df = df.select(pl.col(pl.NUMERIC_DTYPES))
+                if numeric_df.width > 0:
+                    desc_df = numeric_df.describe()
+                    stats = desc_df.to_dicts()
+                    numeric_summary = {}
+                    for col in numeric_df.columns:
+                        numeric_summary[col] = {row['statistic']: row[col] for row in stats}
+                    summary["numeric_summary"] = numeric_summary
+                
                 # Sample rows
-                summary["sample_data"] = df.head(5).to_dict(orient="records")
+                summary["sample_data"] = df.head(5).to_dicts()
                 
                 return {"status": "success", "data": summary}
             except Exception as e:
@@ -108,23 +115,36 @@ class DataAnalyzer:
 
                 if chart_type == "bar":
                     if x_column and y_column:
-                        df.plot(kind="bar", x=x_column, y=y_column, ax=ax, color="#e94560")
+                        ax.bar(df[x_column].to_list(), df[y_column].to_list(), color="#e94560")
+                        ax.set_xlabel(x_column, color="white")
+                        ax.set_ylabel(y_column, color="white")
                     else:
-                        df.select_dtypes(include=["number"]).iloc[:20].plot(kind="bar", ax=ax)
+                        numeric_cols = df.select(pl.col(pl.NUMERIC_DTYPES)).columns
+                        if numeric_cols:
+                            df.head(20)[numeric_cols[0]].to_pandas().plot(kind="bar", ax=ax, color="#e94560")
                 elif chart_type == "line":
                     if x_column and y_column:
-                        df.plot(kind="line", x=x_column, y=y_column, ax=ax, color="#e94560", linewidth=2)
+                        ax.plot(df[x_column].to_list(), df[y_column].to_list(), color="#e94560", linewidth=2)
+                        ax.set_xlabel(x_column, color="white")
+                        ax.set_ylabel(y_column, color="white")
                     else:
-                        df.select_dtypes(include=["number"]).plot(kind="line", ax=ax)
+                        numeric_cols = df.select(pl.col(pl.NUMERIC_DTYPES)).columns
+                        for col in numeric_cols[:3]:
+                            ax.plot(df[col].to_list(), label=col)
+                        ax.legend()
                 elif chart_type == "pie":
-                    col = y_column or df.select_dtypes(include=["number"]).columns[0]
-                    df[col].head(10).plot(kind="pie", ax=ax, autopct="%1.1f%%")
+                    col = y_column or df.select(pl.col(pl.NUMERIC_DTYPES)).columns[0]
+                    data_slice = df.head(10)
+                    ax.pie(data_slice[col].to_list(), labels=data_slice[df.columns[0]].to_list() if len(df.columns) > 1 else None, autopct="%1.1f%%")
                 elif chart_type == "scatter":
                     if x_column and y_column:
-                        df.plot(kind="scatter", x=x_column, y=y_column, ax=ax, color="#e94560", alpha=0.7)
+                        ax.scatter(df[x_column].to_list(), df[y_column].to_list(), color="#e94560", alpha=0.7)
+                        ax.set_xlabel(x_column, color="white")
+                        ax.set_ylabel(y_column, color="white")
                 elif chart_type == "histogram":
-                    col = y_column or x_column or df.select_dtypes(include=["number"]).columns[0]
-                    df[col].plot(kind="hist", ax=ax, bins=30, color="#e94560", edgecolor="#0f3460")
+                    col = y_column or x_column or df.select(pl.col(pl.NUMERIC_DTYPES)).columns[0]
+                    ax.hist(df[col].to_list(), bins=30, color="#e94560", edgecolor="#0f3460")
+                    ax.set_xlabel(col, color="white")
 
                 ax.set_title(chart_title, color="white", fontsize=14, fontweight="bold")
                 ax.tick_params(colors="white")
@@ -152,11 +172,18 @@ class DataAnalyzer:
         # 4. Correlation
         elif analysis_type == "correlation":
             try:
-                numeric_df = df.select_dtypes(include=["number"])
-                if numeric_df.empty:
-                    return {"status": "error", "message": "No numeric columns found for correlation analysis."}
-                corr = numeric_df.corr().round(4).to_dict()
-                return {"status": "success", "data": {"correlation_matrix": corr}}
+                numeric_df = df.select(pl.col(pl.NUMERIC_DTYPES))
+                if numeric_df.width < 2:
+                    return {"status": "error", "message": "Need at least 2 numeric columns for correlation."}
+                
+                # Polars correlation matrix is a bit different, we can compute it manually or use .corr()
+                corr_df = numeric_df.corr()
+                # Convert to dict {col: {other_col: val}}
+                corr_dict = {}
+                cols = corr_df.columns
+                for i, row in enumerate(corr_df.to_dicts()):
+                    corr_dict[cols[i]] = row
+                return {"status": "success", "data": {"correlation_matrix": corr_dict}}
             except Exception as e:
                 return {"status": "error", "message": f"Correlation analysis failed: {str(e)}"}
 

@@ -1,5 +1,6 @@
 ---
 name: "summarize_document"
+enabled: true
 version: "2.0"
 description: >
   Local Document Reader & Summarizer: Extract and summarize content from LOCAL DOCX and PDF files.

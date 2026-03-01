@@ -14,8 +14,8 @@
 ### 🧠 Dynamic Intent Escalation
 Karatos now features **Neural Pivoting**. If a simple conversation (CHAT) intent is found to be insufficient for a complex request, the Brain automatically escalates to a **PLAN** intent. This self-correcting logic ensures the agent autonomously reaches for tools and data whenever a knowledge gap is detected during generation.
 
-### 🔗 Peer-as-Tool (Agent RPC)
-We have completely decentralized Karatos' communication layer. By removing the legacy mailbox bus, agents now coordinate via **Direct Agent RPC**. Each peer is exposed as a dynamic MCP tool, allowing the Brain to call other agents directly for peer-to-peer delegation and collaborative planning.
+### 💬 Inter-Agent Messaging (Zero-Config)
+We have decentralized Karatos' communication layer. Agents now coordinate via **Direct Messaging**. Each agent discovered in the group is exposed as a dynamic `agent:` tool, allowing the Brain to call other bots directly for collaborative planning and social interaction without any manual configuration.
 
 ### 🎞️ Episode-Aware Context & Critic
 Interaction history is now segmented into discrete **Cognitive Episodes**, ensuring relevant memory retrieval without context pollution. Every generation cycle is preceded by a **Context Critic** audit, which critiques the sufficiency of available information and prevents vague or generic responses.

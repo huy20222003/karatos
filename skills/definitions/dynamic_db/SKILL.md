@@ -1,5 +1,6 @@
 ---
 name: "dynamic_db"
+enabled: true
 version: "2.0"
 description: >
   Universal Database Intelligence: Provides high-level guidance for translating natural language into expert-grade SQL. 

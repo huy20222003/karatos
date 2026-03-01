@@ -217,15 +217,22 @@ async def chat_route_node(state: ChatState) -> ChatState:
     if signals.get("ppf", 0) < 0.3 and signals.get("history", 0) < 0.3:
         intuition_signal += " (Brand new interaction pattern)."
 
-    # NGO FIX: Filter out own bot from the peers list to ensure "Private Chat Exception" triggers correctly
-    all_peers = ", ".join([f"@{tag.lstrip('@')} ({name})" for name, tag in peer_bot_map.items()]) if peer_bot_map else "None"
-    logger.debug(f"[ROUTER] Raw bot registrations: {all_peers}")
+    # NGO ENHANCED: Built Entity-based Peers list with Descriptions
+    peer_items = []
+    for name, data in peer_bot_map.items():
+        # name is the simple key, data is the metadata dict {"url": ..., "tag": ..., "description": ...}
+        # Filter out self
+        is_self = (name.lower() == my_name) or (data.get("tag", "").lower().lstrip('@') == (my_username or "").lstrip('@'))
+        if is_self:
+            continue
+            
+        tag = data.get("tag", f"@{name}")
+        desc = data.get("description", "Independent Agent.")
+        peer_items.append(f"{tag} ({name}): \"{desc}\"")
     
-    filtered_peers = {name: tag for name, tag in peer_bot_map.items() 
-                     if name.lower() != my_name and tag.lower().lstrip('@') != (my_username or "").lstrip('@')}
-    peers_list = ", ".join([f"@{tag.lstrip('@')} ({name})" for name, tag in filtered_peers.items()]) if filtered_peers else "None"
+    peers_list = "; ".join(peer_items) if peer_items else "None"
     
-    logger.info(f"[ROUTER] Identified peers (filtered): {peers_list}")
+    logger.info(f"[ROUTER] Identified Peer Entities: {peers_list}")
     
     dynamic_examples = await registry.get_routing_examples()
     

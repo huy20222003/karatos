@@ -23,11 +23,11 @@ class VisualEnhancer:
         lines = text.split("\n")
         table_start = -1
         for i, line in enumerate(lines):
-            line = line.strip()
-            # Must have at least 2 pipes and be a separator line: |---|---|
-            if line.count("|") >= 2 and re.match(r"^\|?[:\s-]+\|?(?:[:\s-]+\|?)*$", line):
-                # The line before must be the header
-                if i > 0 and lines[i-1].count("|") >= 2:
+            trimmed = line.strip()
+            # Relaxed: At least 1 pipe for a 2-column table
+            if trimmed.count("|") >= 1 and re.match(r"^\|?[:\s-]+\|?(?:[:\s-]+\|?)*$", trimmed):
+                # The line before must be the header and have at least 1 pipe
+                if i > 0 and lines[i-1].count("|") >= 1:
                     table_start = i - 1
                     break
         
@@ -190,18 +190,29 @@ class VisualEnhancer:
                 clean_headers = [clean_val(h) for h in headers]
                 clean_rows = [[clean_val(c) for c in r] for r in rows]
 
-                # If data only has 1 column (e.g. simple list, dict with 1 key, or table with 1 header)
-                # then keep it as text and don't generate an image to avoid "empty" reports.
+                # NGO FIX: Strict rule - Only generate image if data has at least 3 columns AND 5 rows
+                # This prevents generating huge images for tiny or simple datasets.
                 non_empty_cols = [h for h in clean_headers if h]
-                if len(non_empty_cols) <= 1:
-                    logger.debug("[VISUALIZER] Single-column data detected. Skipping image rendering, using text only.")
+                if len(non_empty_cols) < 3 or len(clean_rows) < 5:
+                    logger.debug(f"[VISUALIZER] Data too small ({len(non_empty_cols)} cols, {len(clean_rows)} rows). Skipping image rendering.")
                     return response_data if isinstance(response_data, dict) else {"text": text}
 
                 image_bytes = render_table_to_image(clean_rows, clean_headers, title=title)
                 
                 if image_bytes:
-                    # NGO FIX: Better text splitting to preserve intro but replace data with summary
-                    intro_text = text[:text.find(match_text)].strip()
+                    # NGO FIX: Robust text replacement. find() can fail if newlines are mixed (LF vs CRLF).
+                    # We use replace with the exact match_text detected.
+                    # Since match_text was reconstructed from split lines, we try both possibilities.
+                    clean_text = text.replace(match_text, "").strip()
+                    if len(clean_text) == len(text): # Replace failed (likely newline mismatch)
+                        # Fallback to the find approach but more carefully
+                        idx = text.find(match_text.split("\n")[0]) # Find by first line
+                        if idx >= 0:
+                            intro_text = text[:idx].strip()
+                        else:
+                            intro_text = ""
+                    else:
+                        intro_text = clean_text
                     
                     # --- INTELLIGENT SUMMARIZATION ---
                     # We ALWAYS want a summary if it's a visual report

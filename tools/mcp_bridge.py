@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 import typing
 from typing import Any, Dict, List, Optional, Union
 from contextlib import AsyncExitStack
@@ -23,8 +24,11 @@ logger = get_logger()
 TOOL_META = {
     "name": "mcp_bridge",
     "aliases": ["mcp", "mcp_execute"],
+    "description": "Cross-Protocol Bridge: Integrates diverse MCP servers and Inter-Agent Messaging (Chat/RPC).",
+    "author": "Karatos Core",
+    "version": "1.0.0",
+    "enabled": True,
     "class_name": "MCPBridge",
-    "description": "MCP Protocol Bridge: Connects to external MCP-compliant servers for tool discovery and execution (e.g., peer registry, google_search, browser automation).",
     "actions": [
         {
             "name": "mcp_execute",
@@ -93,14 +97,8 @@ class MCPBridge:
             params = self.servers[server_name]
             
             if isinstance(params, str) and (params.startswith("http://") or params.startswith("https://")):
-                headers = {}
-                if server_name.lower() == "mailbox":
-                    # Mailbox server now acts as the Central Peer Registry
-                    headers = {"X-Mailbox-Token": settings.mailbox_auth_token}
-                    logger.info(f"[MCP] Attaching credentials for Central Registry ({server_name})")
-                
                 logger.info(f"[MCP] Connecting to SSE server at: {params}")
-                read, write = await stack.enter_async_context(sse_client(params, headers=headers))
+                read, write = await stack.enter_async_context(sse_client(params))
             else:
                 logger.info(f"[MCP] Starting stdio client for: {server_name}")
                 read, write = await stack.enter_async_context(stdio_client(params))
@@ -164,40 +162,52 @@ class MCPBridge:
 
     async def execute(self, action: str, params: dict) -> typing.Any:
         """
-        Execute an MCP tool via a persistent session.
-        Action format: 'server_name:tool_name' or 'mcp:server_name:tool_name'
+        Execute an MCP tool or Agent action.
+        Agent format: 'agent:name:tool' (e.g. 'agent:niva_sentry:receive_message')
         """
         try:
-            if action.lower().startswith("mcp:"):
-                action = action[4:]
-            
-            # --- Brain 2.6: Peer Agent RPC Resolution ---
-            if action.lower().startswith("peer:"):
-                parts = action.split(":", 2)
-                if len(parts) >= 2:
-                    peer_name = parts[1]
-                    target_tool = parts[2] if len(parts) > 2 else "receive_message"
-                    
-                    # 1. Resolve peer endpoint (Registry Lookup)
-                    registrations = await self.get_peer_registry()
-                    # Mailbox usually returns {name: username}. We need {name: endpoint}.
-                    # For this implementation, we assume peer names map to configured MCP servers
-                    # OR we fetch the dynamic endpoint from the registry.
-                    
-                    # NGO FIX: If peer_name is in our configured servers, use it directly
-                    if peer_name in self.servers:
-                        server_name = peer_name
-                        action = f"{server_name}:{target_tool}"
-                    else:
-                        # Fallback: Check if we have a dynamic mapping or if the peer_name 
-                        # is actually the server name in config.
-                        logger.debug(f"[MCP] Peer '{peer_name}' not directly in config. Searching...")
-                        server_name = peer_name
-                
             server_name = None
             tool_name = None
 
+            # --- Inter-Agent Interaction ---
+            if action.lower().startswith("agent:"):
+                parts = action.split(":", 2)
+                if len(parts) >= 2:
+                    agent_name = parts[1].lower().lstrip('@')
+                    target_tool = parts[2] if len(parts) > 2 else "receive_message"
+                    
+                    # Resolve agent from Dynamic Registry
+                    registrations = await self.get_agent_registry()
+                    reg_data = registrations.get(agent_name)
+                    
+                    if reg_data:
+                        endpoint = reg_data.get("url")
+                        telegram_id = reg_data.get("id") or reg_data.get("telegram_id")
+                        
+                        # High-Speed Interaction (If URL exists)
+                        if endpoint:
+                            if agent_name not in self.servers:
+                                logger.info(f"[MCP] Registering Agent '{agent_name}' at {endpoint}")
+                                self.servers[agent_name] = endpoint
+                            server_name = agent_name
+                            action = f"{server_name}:{target_tool}"
+                        
+                        # Telegram Messaging Interaction (Fallback or Default)
+                        elif telegram_id and target_tool == "receive_message":
+                             logger.info(f"[MCP] Agent '{agent_name}' discovered. Messaging via Telegram...")
+                             from utils.userbot_manager import get_userbot_manager
+                             ub = get_userbot_manager()
+                             text = params.get("message") or params.get("text") or str(params)
+                             success = await ub.send_message(telegram_id, text)
+                             return {"status": "success" if success else "error", "method": "telegram_message", "recipient": agent_name}
+                        else:
+                             return {"status": "error", "message": f"Agent '{agent_name}' found but only supports Telegram messaging for 'receive_message'."}
+                    else:
+                        logger.warning(f"[MCP] Agent '{agent_name}' not discovered in group.")
+                        return {"status": "error", "message": f"Agent '{agent_name}' not found. Ensure it is in the discovery group."}
+
             if ":" not in action:
+                # ... (rest of standard tool lookup)
                 if action.upper() in self._tool_map:
                     server_name = self._tool_map[action.upper()]
                     tool_name = action.lower()
@@ -266,22 +276,35 @@ class MCPBridge:
                  await self.close_session(server_name)
             return {"status": "error", "message": str(e)}
 
-    async def get_peer_registry(self) -> typing.Dict[str, str]:
-        """Fetch and parse peer name-to-username registrations from the central registry."""
+    async def get_agent_registry(self) -> typing.Dict[str, typing.Union[str, dict]]:
+        """
+        Dynamic Discovery Registry.
+        Automatically promotes group bots to Agent entities.
+        """
+        now = time.time()
+        if hasattr(self, '_registry_cache') and (now - self._registry_cache_ts < 300):
+            return self._registry_cache
+
+        agents = {}
+        
+        # Pure Dynamic Discovery via Userbot
         try:
-            # Legacy fallback: use mailbox tool to fetch registry data
-            response = await self.execute("mailbox:get_registrations", {})
-            if response and response.get("status") == "success":
-                res_box = response.get("result", {})
-                if isinstance(res_box, dict) and "value" in res_box:
-                    return json.loads(res_box["value"])
-                elif isinstance(res_box, str):
-                    return json.loads(res_box)
-                elif isinstance(res_box, dict):
-                    return res_box
+            from utils.userbot_manager import get_userbot_manager
+            ub_manager = get_userbot_manager()
+            if ub_manager.client is None or not ub_manager.client.is_connected():
+                await ub_manager.start()
+            
+            if ub_manager.client and ub_manager.client.is_connected():
+                discovered = await ub_manager.get_agents_from_group()
+                if discovered:
+                    agents.update(discovered)
+                    logger.info(f"[MCP] Discovered {len(discovered)} active agents in group.")
         except Exception as e:
-            logger.debug(f"[MCP] Failed to fetch bot registrations: {e}")
-        return {}
+            logger.warning(f"[MCP] Dynamic agent discovery failed: {e}")
+
+        self._registry_cache = agents
+        self._registry_cache_ts = now
+        return agents
 
 
 # Singleton

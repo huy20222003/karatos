@@ -148,8 +148,8 @@ class Channel(ABC):
         }
         emoji = emoji_map.get(severity, "📢")
         
-        formatted = f"{emoji} *{title}*\n\n{body}"
-        return await self.send(formatted, recipient=recipient, parse_mode="Markdown")
+        formatted = f"{emoji} <b>{title}</b>\n\n{body}"
+        return await self.send(formatted, recipient=recipient, parse_mode="HTML")
         
     async def ask_confirmation(
         self,

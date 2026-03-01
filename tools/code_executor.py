@@ -18,6 +18,9 @@ TOOL_META = {
     "name": "code_executor",
     "aliases": ["run_python", "python"],
     "class_name": "CodeExecutor",
+    "enabled": True,
+    "author": "Karatos Core",
+    "version": "1.0.0",
     "description": "Python Code Executor: Runs Python code in a sandboxed subprocess with timeout, output capture, and error handling. Useful for data processing, calculations, file parsing, and automation scripts.",
     "actions": [
         {
@@ -62,7 +65,7 @@ SAFE_IMPORTS = {
     "pathlib", "os.path", "glob",
     "urllib.parse", "html",
     # Data processing (if installed)
-    "pandas", "numpy", "polars",
+    "numpy", "polars",
 }
 
 

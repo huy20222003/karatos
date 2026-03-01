@@ -208,7 +208,7 @@ class TelegramChannel(Channel):
         content: Union[str, dict],
         recipient: Optional[str] = None,
         reply_to: Optional[str] = None,
-        parse_mode: str = "Markdown",
+        parse_mode: str = "HTML",
         **kwargs
     ) -> bool:
         """Send a message via Telegram. Supports both text and structured dicts with photos."""
@@ -233,8 +233,10 @@ class TelegramChannel(Channel):
         if isinstance(content, dict):
             text_to_send = content.get("text", str(content))
 
-        # Normalize LLM markdown (GitHub-style) to Telegram V1
-        if parse_mode == "Markdown":
+        # Normalize LLM markdown (GitHub-style) to Telegram HTML
+        if parse_mode == "HTML":
+            text_to_send = self.markdown_to_html(text_to_send)
+        elif parse_mode == "Markdown":
             text_to_send = self.normalize_markdown(text_to_send)
 
         # Smart underscore escaping: Already handled inside normalize_markdown for V1 consistency
@@ -380,7 +382,42 @@ class TelegramChannel(Channel):
         """
         if not text: return text
         
-        # 1. Protect code blocks first (replace with placeholders)
+        return self.markdown_to_html(text)
+
+    def markdown_to_html(self, text: str) -> str:
+        """Convert GitHub-style markdown to Telegram-safe HTML."""
+        if not text: return ""
+        
+        # 0. Escape basic HTML entities (except those we want to use)
+        # Note: We'll add our own tags later
+        text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        
+        # 1. Blocks: ```code``` -> <pre><code>code</code></pre>
+        def repl_code_block(m):
+            code = m.group(1).strip()
+            return f"<pre><code>{code}</code></pre>"
+        text = re.sub(r'```(?:[a-zA-Z]*)\n?([\s\S]*?)```', repl_code_block, text)
+        
+        # 2. Inline: `code` -> <code>code</code>
+        text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+        
+        # 3. Bold: **text** -> <b>text</b>
+        text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+        
+        # 4. Italic: *text* (avoiding match with list markers or bold parts)
+        # Simple italic: *text* or _text_
+        text = re.sub(r'\*([^\*]+)\*', r'<i>\1</i>', text)
+        
+        # 5. Lists: - item -> • item (No native HTML list support in Telegram sendMessage)
+        text = re.sub(r'^(\s*)[-*]\s+', r'\1• ', text, flags=re.MULTILINE)
+        
+        # 6. Headings: ### Title -> <b>Title</b>
+        text = re.sub(r'^#{1,6}\s+(.+)$', r'<b>\1</b>', text, flags=re.MULTILINE)
+        
+        return text
+
+    def normalize_markdown_v1(self, text: str) -> str:
+        """Original Telegram V1 Markdown normalizer (kept for fallback)."""
         code_blocks = []
         def save_code_block(match):
             code_blocks.append(match.group(0))

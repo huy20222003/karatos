@@ -23,14 +23,18 @@ class TelegramConnector:
         self.handler = TelegramCommandHandler(agent=self.agent, channel=self.telegram)
         self.admin_chat = settings.telegram_chat_id
         self._running = False
-        self._processed_cache = set()
+        self._processed_hashes = set()
         self._last_report_day = None
         self._last_registration_time = 0 # Epoch timestamp of last successful registration
 
     async def _handle_message(self, message):
         """Callback for incoming Telegram messages"""
         try:
-            # NGO FIX: Deduplicate across Group & Mailbox
+            # NGO FIX: Deduplicate incoming messages
+            # This deduplication is a heuristic to prevent processing the same message multiple times
+            # when it's delivered to both a group chat and a mailbox, or due to Telegram API retries.
+            # For bots, we use content hash; for humans, Telegram message ID is more reliable.
+            
             content = message.content or ""
             chat_id = message.chat_id
             
@@ -41,20 +45,20 @@ class TelegramConnector:
                 clean_content = content.strip()
                 msg_hash = hash(f"{chat_id}:{clean_content}")
                 
-                if msg_hash in self._processed_cache:
+                if msg_hash in self._processed_hashes:
                     logger.debug(f"[TelegramConnector] Skipping duplicate bot message hash {msg_hash}")
                     return
-                self._processed_cache.add(msg_hash)
+                self._processed_hashes.add(msg_hash)
             else:
                 # For human users, deduplicate safely by Telegram message ID
                 msg_hash = f"tg_msg_{message.id}"
-                if msg_hash in self._processed_cache:
+                if msg_hash in self._processed_hashes:
                     return
-                self._processed_cache.add(msg_hash)
+                self._processed_hashes.add(msg_hash)
             
             # Limit cache size
-            if len(self._processed_cache) > 200:
-                self._processed_cache.clear()
+            if len(self._processed_hashes) > 200:
+                self._processed_hashes.clear()
 
             response = await self.handler.handle(message)
             if response:
@@ -68,7 +72,7 @@ class TelegramConnector:
                     payload = {k: v for k, v in response.items() if k != "reply_to"}
                 await self.telegram.send(payload, recipient=message.chat_id, reply_to=reply_id)
                 
-                # --- BRAIN 2.6: Peer-as-Tool (Agent RPC) ---
+                # --- INTER-AGENT MESSAGING (Brain 3.0) ---
                 mentions = re.findall(r'@[a-zA-Z0-9_]+', content)
                 text_content = content
                 
@@ -81,21 +85,21 @@ class TelegramConnector:
                     
                     for m in mentions:
                         if m.lower() != my_username.lower():
-                            # Target peer name (e.g. '@Niva' -> 'niva')
-                            peer_name = m.lstrip('@').lower()
-                            peer_tool = f"peer:{peer_name}"
+                            # Target agent name (e.g. '@Niva' -> 'niva')
+                            agent_name = m.lstrip('@').lower()
+                            agent_tool = f"agent:{agent_name}"
                             
-                            logger.info(f"[A2A_RPC] 📤 Sending direct RPC to {m} via {peer_tool}")
+                            logger.info(f"[Inter-Agent] 📤 Forwarding message to {m} via {agent_tool}")
                             try:
-                                # Use dispatch to execute the dynamic peer tool
-                                rpc_res = await registry.dispatch(peer_tool, {
+                                # Dispatch to the dynamic agent tool
+                                rpc_res = await registry.dispatch(agent_tool, {
                                     "message": text_content,
                                     "chat_id": str(message.chat_id),
                                     "sender": my_username
                                 })
-                                logger.debug(f"[A2A_RPC] RPC for {m}: {rpc_res.get('status')}")
+                                logger.debug(f"[Inter-Agent] Result for {m}: {rpc_res.get('status')}")
                             except Exception as e:
-                                logger.error(f"[A2A_RPC] Failed RPC for {m}: {e}")
+                                logger.error(f"[Inter-Agent] Failed to message {m}: {e}")
                             
         except Exception as e:
             logger.error(f"[TelegramConnector] Error handling message: {e}")
@@ -112,14 +116,18 @@ class TelegramConnector:
             
         # 1.5 Sync Identity back to Agent
         self.agent.refresh_identity()
+        
+        # 1.6 Start Userbot for Dynamic Peer Discovery
+        try:
+            from utils.userbot_manager import get_userbot_manager
+            asyncio.create_task(get_userbot_manager().start())
+        except Exception as e:
+            logger.warning(f"[TelegramConnector] Failed to initialize Userbot in background: {e}")
             
         # 2. Send Startup Notification (Brain-Powered)
         if self.admin_chat:
             await self._send_brain_greeting()
             logger.info(f"[TelegramConnector] Brain greeting sent to Admin ({self.admin_chat})")
-            
-        # 3. Register Identity with MCP Mailbox
-        await self._register_identity()
 
         # 4. Start Main Loop
         try:
@@ -143,10 +151,6 @@ class TelegramConnector:
                 if not hasattr(self, "_polling_task") or self._polling_task.done():
                     logger.info("[TelegramConnector] Spawning polling task.")
                     self._polling_task = asyncio.create_task(self.telegram.start(handler=self._handle_message))
-                
-                # 2. Re-Register Identity (Heartbeat)
-                # Frequent re-registration ensures registry robustness
-                await self._register_identity()
                 
                 # 3. Scheduled Tasks
                 await self._check_patrol()
@@ -209,42 +213,6 @@ class TelegramConnector:
             await self.telegram.send("✅ Brain Online.", recipient=self.admin_chat)
 
     # _check_mailbox removed in Brain 2.6 in favor of Direct Agent RPC
-
-    async def _register_identity(self):
-        """Register or refresh bot identity with MCP Mailbox (with cooldown)."""
-        import time
-        import random
-        
-        # Only register every 60 seconds to avoid overwhelming the stateless server
-        now = time.time()
-        if now - self._last_registration_time < 60:
-            return
-
-        try:
-            # Add small jitter (0-2s) to prevent synchronized bursts from multiple bots
-            await asyncio.sleep(random.random() * 2)
-            
-            bot_username = getattr(self.telegram, 'username', None)
-            if not bot_username:
-                bot_username = getattr(settings, 'bot_username', None)
-                
-            # Prioritize settings.bot_name (which is updated from getMe in connect()) 
-            # over the generic channel name "telegram"
-            bot_display_name = settings.bot_name or getattr(self.telegram, 'name', None)
-            
-            if bot_username:
-                from tools.mcp_bridge import get_mcp_bridge
-                bridge = get_mcp_bridge()
-                # Register with Central Registry to be discoverable by other agents
-                await bridge.execute("mailbox:register_bot", {
-                    "name": bot_display_name,
-                    "username": f"@{bot_username}" if not str(bot_username).startswith('@') else bot_username
-                })
-                self._last_registration_time = now
-                logger.debug(f"[A2A] Identity heartbeat: {bot_display_name} ({bot_username})")
-        except Exception as e:
-            # Downgrade to debug to avoid log noise during server flakiness
-            logger.debug(f"[A2A] Registration heartbeat failed: {e}")
 
 
     async def _check_patrol(self):

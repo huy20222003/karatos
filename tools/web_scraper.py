@@ -16,6 +16,9 @@ TOOL_META = {
     "name": "web_scraper",
     "aliases": ["scrape", "scrape_url", "fetch_page", "summarize_url", "summarize_web", "tóm tắt website"],
     "class_name": "WebScraper",
+    "enabled": True,
+    "author": "Karatos Core",
+    "version": "1.0.0",
     "description": "Web Scraper: Fetches and extracts content from web pages using Scrapling. Supports fast HTTP, stealth mode (anti-bot bypass), and full JS rendering. Extracts text, HTML, links, or structured data with CSS/XPath selectors.",
     "actions": [
         {
