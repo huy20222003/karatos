@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import time
 import typing
 from typing import Any, Dict, List, Optional, Union
 from contextlib import AsyncExitStack
@@ -24,7 +23,7 @@ logger = get_logger()
 TOOL_META = {
     "name": "mcp_bridge",
     "aliases": ["mcp", "mcp_execute"],
-    "description": "Cross-Protocol Bridge: Integrates diverse MCP servers and Inter-Agent Messaging (Chat/RPC).",
+    "description": "Cross-Protocol Bridge: Integrates diverse MCP servers for tool execution. Supports decentralized agent-to-agent (bot-to-bot) communication via networked mailboxes.",
     "author": "Karatos Core",
     "version": "1.0.0",
     "enabled": True,
@@ -58,79 +57,252 @@ class MCPBridge:
         self.active_sessions: typing.Dict[str, typing.Dict[str, typing.Any]] = {}
         self._tool_map: typing.Dict[str, str] = {}
         self._initialized = False
-        self._load_config()
+        self.reload()
 
-    def _load_config(self):
-        """Load MCP server configurations from settings"""
-        server_configs = settings.mcp_servers
-        for name, config in server_configs.items():
+    def get_config_path(self) -> str:
+        """Get the absolute path to the MCP configuration file"""
+        from pathlib import Path
+        config_path = Path(settings.mcp_config_path)
+        if not config_path.is_absolute():
+            root_dir = Path(__file__).parent.parent
+            config_path = root_dir / settings.mcp_config_path
+        return str(config_path.absolute())
+
+    def reload(self):
+        """Reload configuration from disk and refresh sessions if needed"""
+        logger.info("[MCP] Reloading configuration from disk...")
+        # We don't necessarily want to shut down ALL sessions immediately 
+        # as it might interrupt ongoing tasks, but we need to refresh the server list.
+        # However, for a clean reload when a server is edited/removed, shutdown is safer.
+        self.servers.clear()
+        self._load_config_from_json()
+        logger.info(f"[MCP] Reload complete. {len(self.servers)} servers configured.")
+
+    def _load_config_from_json(self):
+        """Load MCP server configurations directly from JSON file"""
+        from pathlib import Path
+        config_path = Path(settings.mcp_config_path)
+        if not config_path.is_absolute():
+            # Try relative to the app root
+            root_dir = Path(__file__).parent.parent
+            config_path = root_dir / settings.mcp_config_path
+
+        if config_path.exists():
             try:
-                env_vars = config.get("env", None)
-                if env_vars:
-                    env_vars = {k: os.path.expandvars(v) for k, v in env_vars.items()}
-                
-                command = config.get("command")
-                if command and (command.startswith("http://") or command.startswith("https://")):
-                     self.servers[name] = command
-                else:
-                    self.servers[name] = StdioServerParameters(
-                        command=command,
-                        args=config.get("args", []),
-                        env=env_vars
-                    )
-                logger.info(f"[MCP] Configured server: {name}")
+                with open(config_path, "r", encoding="utf-8") as f:
+                    external_config = json.load(f)
+                    
+                    # Support both key formats
+                    json_servers = external_config.get("mcp_servers") or external_config.get("mcpServers")
+                    if json_servers is None:
+                        json_servers = external_config if isinstance(external_config, dict) else {}
+
+                    for name, config in json_servers.items():
+                        self.register_server(name, config)
+                            
             except Exception as e:
-                logger.error(f"[MCP] Failed to configure server {name}: {e}")
+                logger.warning(f"[MCP] Failed to load config from {config_path}: {e}")
+
+    def register_server(self, name: str, config: dict):
+        """Register a server configuration in memory"""
+        try:
+            env_vars = config.get("env", None)
+            if env_vars:
+                from dotenv import load_dotenv
+                load_dotenv()
+                env_vars = {k: os.path.expandvars(str(v)) for k, v in env_vars.items()}
+            
+            command = config.get("command")
+            if command and (command.startswith("http://") or command.startswith("https://")):
+                 self.servers[name] = command
+            else:
+                self.servers[name] = StdioServerParameters(
+                    command=command,
+                    args=config.get("args", []),
+                    env=env_vars
+                )
+            logger.info(f"[MCP] Registered server: {name}")
+        except Exception as e:
+            logger.error(f"[MCP] Failed to register server {name}: {e}")
+
+    def get_server_configs(self) -> dict:
+        """Get the raw server configurations (for listing)"""
+        # Re-read from file to ensure we're in sync with disk for management purposes
+        from pathlib import Path
+        config_path = Path(settings.mcp_config_path)
+        if not config_path.is_absolute():
+            root_dir = Path(__file__).parent.parent
+            config_path = root_dir / settings.mcp_config_path
+            
+        if config_path.exists():
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    return data.get("mcp_servers") or data.get("mcpServers") or (data if isinstance(data, dict) else {})
+            except: pass
+        return {}
+
+    async def add_server(self, name: str, config: dict) -> bool:
+        """Persist a new server to JSON and register it in memory"""
+        from pathlib import Path
+        config_path = Path(settings.mcp_config_path)
+        if not config_path.is_absolute():
+            root_dir = Path(__file__).parent.parent
+            config_path = root_dir / settings.mcp_config_path
+            
+        try:
+            # 1. Load existing
+            data = {}
+            if config_path.exists():
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            
+            # 2. Determine key
+            key = "mcpServers" if "mcpServers" in data else "mcp_servers"
+            if key not in data and not isinstance(data, dict):
+                data = {key: {}}
+            elif key not in data:
+                data[key] = {}
+                
+            # 3. Update
+            data[key][name] = config
+            
+            # 4. Save
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+                
+            # 5. Register in current Bridge instance
+            self.register_server(name, config)
+            return True
+        except Exception as e:
+            logger.error(f"[MCP] Failed to add server {name}: {e}")
+            return False
+
+    async def remove_server(self, name: str) -> bool:
+        """Remove a server from JSON and memory"""
+        from pathlib import Path
+        config_path = Path(settings.mcp_config_path)
+        if not config_path.is_absolute():
+            root_dir = Path(__file__).parent.parent
+            config_path = root_dir / settings.mcp_config_path
+            
+        try:
+            if config_path.exists():
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                
+                key = "mcpServers" if "mcpServers" in data else "mcp_servers"
+                if key in data and name in data[key]:
+                    del data[key][name]
+                    with open(config_path, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=4)
+                    
+                    # Remove from memory
+                    self.servers.pop(name, None)
+                    await self.close_session(name)
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"[MCP] Failed to remove server {name}: {e}")
+            return False
 
     async def _ensure_session(self, server_name: str) -> typing.Optional[ClientSession]:
         """Establish or retrieve a persistent session for an MCP server"""
-        if server_name in self.active_sessions:
+        if server_name in self.active_sessions and 'session' in self.active_sessions[server_name]:
             return self.active_sessions[server_name]['session']
             
         if server_name not in self.servers:
             logger.error(f"[MCP] Server {server_name} not found in configuration")
             return None
             
-        try:
-            logger.info(f"[MCP] Starting persistent session for: {server_name}")
-            stack = AsyncExitStack()
-            params = self.servers[server_name]
-            
-            if isinstance(params, str) and (params.startswith("http://") or params.startswith("https://")):
-                logger.info(f"[MCP] Connecting to SSE server at: {params}")
-                read, write = await stack.enter_async_context(sse_client(params))
-            else:
-                logger.info(f"[MCP] Starting stdio client for: {server_name}")
-                read, write = await stack.enter_async_context(stdio_client(params))
-            
-            session = await stack.enter_async_context(ClientSession(read, write))
-            await session.initialize()
-            
-            self.active_sessions[server_name] = {
-                'session': session,
-                'stack': stack
-            }
-            logger.info(f"[MCP] Session established for: {server_name}")
-            return session
-            
-        except Exception as e:
-            logger.error(f"[MCP] Failed to start session for {server_name}: {e}")
+        # Initialize placeholders to prevent concurrent identical startups
+        ready_event = asyncio.Event()
+        error_container = {}
+        close_event = asyncio.Event()
+        
+        self.active_sessions[server_name] = {
+            'close_event': close_event
+        }
+        
+        logger.info(f"[MCP] Activating background session task for: {server_name}")
+        task = asyncio.create_task(
+            self._session_task(server_name, self.servers[server_name], ready_event, error_container),
+            name=f"MCP_Session_{server_name}"
+        )
+        self.active_sessions[server_name]['task'] = task
+        
+        await ready_event.wait()
+        
+        if 'error' in error_container:
+            logger.error(f"[MCP] Failed to start session for {server_name}: {error_container['error']}")
+            self.active_sessions.pop(server_name, None)
             return None
+            
+        return self.active_sessions[server_name].get('session')
+
+    async def _session_task(self, server_name: str, params: typing.Any, ready_event: asyncio.Event, error_container: dict):
+        """Background task to inherently bind the anyio CancelScope to a single task."""
+        try:
+            if isinstance(params, str) and (params.startswith("http://") or params.startswith("https://")):
+                headers = {}
+                raw_config = self.get_server_configs().get(server_name, {})
+                env_vars = raw_config.get("env", {})
+                if env_vars:
+                    from dotenv import load_dotenv
+                    load_dotenv()
+                    headers.update({k: os.path.expandvars(str(v)) for k, v in env_vars.items()})
+                    
+                async with sse_client(params, headers=headers, timeout=15.0, sse_read_timeout=600.0) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        if server_name in self.active_sessions:
+                            self.active_sessions[server_name]['session'] = session
+                        ready_event.set()
+                        logger.info(f"[MCP] Session established for: {server_name}")
+                        
+                        # Hold the context manager open until we need to close
+                        close_event = self.active_sessions.get(server_name, {}).get('close_event')
+                        if close_event:
+                            await close_event.wait()
+            else:
+                async with stdio_client(params) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        if server_name in self.active_sessions:
+                            self.active_sessions[server_name]['session'] = session
+                        ready_event.set()
+                        logger.info(f"[MCP] Session established for: {server_name}")
+                        
+                        close_event = self.active_sessions.get(server_name, {}).get('close_event')
+                        if close_event:
+                            await close_event.wait()
+                            
+        except Exception as e:
+            error_msg = str(e)
+            if hasattr(e, "exceptions"):
+                sub_msgs = [str(sub) for sub in e.exceptions]
+                error_msg = f"{error_msg} -> " + ", ".join(sub_msgs)
+                
+            if not ready_event.is_set():
+                error_container['error'] = error_msg
+                ready_event.set()
+            else:
+                logger.debug(f"[MCP] Session task for {server_name} ended: {error_msg}")
+        finally:
+            if server_name in self.active_sessions:
+                # Optionally clean up if this task exits unexpectedly
+                # We do not pop here completely aggressively to avoid race conditions,
+                # but removing 'session' forces a reconnect next time.
+                self.active_sessions.get(server_name, {}).pop('session', None)
 
     async def close_session(self, server_name: str):
         """Close a specific server session."""
         if server_name in self.active_sessions:
             logger.info(f"[MCP] Closing session: {server_name}")
             data = self.active_sessions.pop(server_name)
-            try:
-                await data['stack'].aclose()
-            except RuntimeError as re:
-                if "cancel scope" in str(re):
-                    logger.debug(f"[MCP] Cancel scope mismatch for {server_name} during closure (expected on task mismatch)")
-                else:
-                    logger.warning(f"[MCP] Error closing session {server_name}: {re}")
-            except Exception as e:
-                logger.warning(f"[MCP] Error closing session {server_name}: {e}")
+            if 'close_event' in data:
+                data['close_event'].set()
+            # Task will gracefully exit its async with blocks
 
     async def shutdown(self):
         """Close all active sessions."""
@@ -166,48 +338,14 @@ class MCPBridge:
         Agent format: 'agent:name:tool' (e.g. 'agent:niva_sentry:receive_message')
         """
         try:
+            if action.startswith("mcp:"):
+                action = action[4:]
+                
             server_name = None
             tool_name = None
 
-            # --- Inter-Agent Interaction ---
-            if action.lower().startswith("agent:"):
-                parts = action.split(":", 2)
-                if len(parts) >= 2:
-                    agent_name = parts[1].lower().lstrip('@')
-                    target_tool = parts[2] if len(parts) > 2 else "receive_message"
-                    
-                    # Resolve agent from Dynamic Registry
-                    registrations = await self.get_agent_registry()
-                    reg_data = registrations.get(agent_name)
-                    
-                    if reg_data:
-                        endpoint = reg_data.get("url")
-                        telegram_id = reg_data.get("id") or reg_data.get("telegram_id")
-                        
-                        # High-Speed Interaction (If URL exists)
-                        if endpoint:
-                            if agent_name not in self.servers:
-                                logger.info(f"[MCP] Registering Agent '{agent_name}' at {endpoint}")
-                                self.servers[agent_name] = endpoint
-                            server_name = agent_name
-                            action = f"{server_name}:{target_tool}"
-                        
-                        # Telegram Messaging Interaction (Fallback or Default)
-                        elif telegram_id and target_tool == "receive_message":
-                             logger.info(f"[MCP] Agent '{agent_name}' discovered. Messaging via Telegram...")
-                             from utils.userbot_manager import get_userbot_manager
-                             ub = get_userbot_manager()
-                             text = params.get("message") or params.get("text") or str(params)
-                             success = await ub.send_message(telegram_id, text)
-                             return {"status": "success" if success else "error", "method": "telegram_message", "recipient": agent_name}
-                        else:
-                             return {"status": "error", "message": f"Agent '{agent_name}' found but only supports Telegram messaging for 'receive_message'."}
-                    else:
-                        logger.warning(f"[MCP] Agent '{agent_name}' not discovered in group.")
-                        return {"status": "error", "message": f"Agent '{agent_name}' not found. Ensure it is in the discovery group."}
-
             if ":" not in action:
-                # ... (rest of standard tool lookup)
+                # Direct tool lookup
                 if action.upper() in self._tool_map:
                     server_name = self._tool_map[action.upper()]
                     tool_name = action.lower()
@@ -276,35 +414,6 @@ class MCPBridge:
                  await self.close_session(server_name)
             return {"status": "error", "message": str(e)}
 
-    async def get_agent_registry(self) -> typing.Dict[str, typing.Union[str, dict]]:
-        """
-        Dynamic Discovery Registry.
-        Automatically promotes group bots to Agent entities.
-        """
-        now = time.time()
-        if hasattr(self, '_registry_cache') and (now - self._registry_cache_ts < 300):
-            return self._registry_cache
-
-        agents = {}
-        
-        # Pure Dynamic Discovery via Userbot
-        try:
-            from utils.userbot_manager import get_userbot_manager
-            ub_manager = get_userbot_manager()
-            if ub_manager.client is None or not ub_manager.client.is_connected():
-                await ub_manager.start()
-            
-            if ub_manager.client and ub_manager.client.is_connected():
-                discovered = await ub_manager.get_agents_from_group()
-                if discovered:
-                    agents.update(discovered)
-                    logger.info(f"[MCP] Discovered {len(discovered)} active agents in group.")
-        except Exception as e:
-            logger.warning(f"[MCP] Dynamic agent discovery failed: {e}")
-
-        self._registry_cache = agents
-        self._registry_cache_ts = now
-        return agents
 
 
 # Singleton

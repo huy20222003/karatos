@@ -155,6 +155,20 @@ class Settings(BaseSettings):
         description="Endpoint for Claude Web (internal proxy API)",
         alias="CLAUDE_WEB_ENDPOINT"
     )
+    claude_web_port: int = Field(
+        default=8001,
+        description="Port for Claude Web proxy server",
+        alias="CLAUDE_WEB_PORT"
+    )
+
+    # ===========================================
+    # Dashboard Port
+    # ===========================================
+    dashboard_port: int = Field(
+        default=7860,
+        description="Port for the GUI dashboard server",
+        alias="DASHBOARD_PORT"
+    )
 
     # ===========================================
     # DeepSeek Configuration
@@ -237,12 +251,7 @@ class Settings(BaseSettings):
         description="Path to JSON file containing MCP server definitions",
         alias="MCP_CONFIG_PATH"
     )
-    mcp_servers: dict = Field(
-        default_factory=dict,
-        description="Configuration for MCP Servers (command, args, env)",
-        alias="MCP_SERVERS"
-    )
-    
+
     # ===========================================
     # Tavily Configuration
     # ===========================================
@@ -276,59 +285,23 @@ class Settings(BaseSettings):
     )
 
     # ===========================================
-    # Telegram Userbot Configuration
+    # Cloudinary Configuration
     # ===========================================
-    telegram_api_id: Optional[int] = Field(
-        default=None,
-        description="Telegram API ID for Userbot",
-        alias="TELEGRAM_API_ID"
+    cloudinary_cloud_name: Optional[str] = Field(
+        default="",
+        description="Cloud Name for Cloudinary",
+        alias="CLOUDINARY_CLOUD_NAME"
     )
-    telegram_api_hash: Optional[str] = Field(
-        default=None,
-        description="Telegram API Hash for Userbot",
-        alias="TELEGRAM_API_HASH"
+    cloudinary_api_key: Optional[str] = Field(
+        default="",
+        description="API Key for Cloudinary",
+        alias="CLOUDINARY_API_KEY"
     )
-    telegram_userbot_session: str = Field(
-        default="karatos",
-        description="Session name for Userbot",
-        alias="TELEGRAM_USERBOT_SESSION"
+    cloudinary_api_secret: Optional[str] = Field(
+        default="",
+        description="API Secret for Cloudinary",
+        alias="CLOUDINARY_API_SECRET"
     )
-    telegram_discovery_group_id: Optional[Union[str, int]] = Field(
-        default=None,
-        description="ID of the group to scan for peers",
-        alias="TELEGRAM_DISCOVERY_GROUP_ID"
-    )
-
-    def model_post_init(self, __context):
-        """Load and merge MCP config from JSON after initialization"""
-        import json
-        
-        # Determine absolute path for config
-        config_path = Path(self.mcp_config_path)
-        if not config_path.is_absolute():
-            # Try relative to the app root (where main.py typically is)
-            root_dir = Path(__file__).parent.parent
-            config_path = root_dir / self.mcp_config_path
-
-        if config_path.exists():
-            try:
-                with open(config_path, "r", encoding="utf-8") as f:
-                    external_config = json.load(f)
-                    
-                    # FLEXIBLE RESOLUTION: Check if it's nested under 'mcp_servers', 'mcpServers', or directly at root
-                    json_servers = external_config.get("mcp_servers") or external_config.get("mcpServers")
-                    
-                    if json_servers is None:
-                        # If not in key, then the whole file might be the dict
-                        json_servers = external_config if isinstance(external_config, dict) else {}
-
-                    # Merge JSON config into mcp_servers dictionary
-                    for name, config in json_servers.items():
-                        if name not in self.mcp_servers:
-                            self.mcp_servers[name] = config
-                            
-            except Exception as e:
-                print(f"[SETTINGS] Warning: Failed to load MCP config from {config_path}: {e}")
     
     # ===========================================
     # Logging Configuration
@@ -398,54 +371,44 @@ class Settings(BaseSettings):
         
         if missing:
             raise ValueError(f"Missing required configuration: {', '.join(missing)}")
-        
-    def save_to_env(self, updates: dict):
-        """Update .env file with new values and reload current settings."""
-        env_path = Path(self.Config.env_file)
-        if not env_path.exists():
-            # Create if doesn't exist
-            with open(env_path, "w", encoding="utf-8") as f:
-                f.write("# Karatos Environment Configuration\n")
 
-        # Read existing content
-        with open(env_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
+    def load_from_secure_config(self):
+        """
+        Load user-editable fields from secure_config.enc.json.
+        On first run: auto-migrate current values from .env → JSON.
+        After that: JSON is the single source of truth for managed fields.
+        """
+        try:
+            from config.secure_config import get_all, MANAGED_FIELDS
 
-        # Update or add new variables
-        updated_keys = set()
-        new_lines = []
-        
-        for line in lines:
-            if "=" in line and not line.strip().startswith("#"):
-                key = line.split("=")[0].strip()
-                if key in updates:
-                    new_lines.append(f"{key}={updates[key]}\n")
-                    updated_keys.add(key)
-                    continue
-            new_lines.append(line)
+            # Load from encrypted JSON
+            overrides = get_all()
+            applied = 0
+            for key, value in overrides.items():
+                if key in MANAGED_FIELDS and value is not None and str(value).strip():
+                    if hasattr(self, key):
+                        setattr(self, key, value)
+                        applied += 1
+            if applied:
+                print(f"[SETTINGS] Loaded {applied} values from secure_config.enc.json")
+        except Exception as e:
+            print(f"[SETTINGS] Secure config not loaded (will use .env defaults): {e}")
 
-        # Append new keys that weren't in the file
-        for key, value in updates.items():
-            if key not in updated_keys:
-                if new_lines and not new_lines[-1].endswith("\n"):
-                    new_lines.append("\n")
-                new_lines.append(f"{key}={value}\n")
+    def save_to_secure_config(self, updates: dict):
+        """Save values to encrypted secure_config.enc.json and update live settings."""
+        from config.secure_config import update as sc_update, MANAGED_FIELDS
 
-        # Write back to file
-        with open(env_path, "w", encoding="utf-8") as f:
-            f.writelines(new_lines)
-            
-        print(f"[SETTINGS] Saved {len(updates)} variables to {self.Config.env_file}")
-        
-        # Optionally: In a real app we might want to reload the Pydantic model here
-        # or just rely on the next process start. For now, we update the current instance.
-        for key, value in updates.items():
-            # Find the alias for the field
-            for field_name, field in self.model_fields.items():
-                if field.alias == key or field_name == key:
-                    setattr(self, field_name, value)
-                    break
+        managed = {k: v for k, v in updates.items() if k in MANAGED_FIELDS}
+        if managed:
+            sc_update(managed)
+            for key, value in managed.items():
+                if hasattr(self, key):
+                    setattr(self, key, value)
 
 
 # Singleton instance
 settings = Settings()
+# Load user-editable fields from encrypted config (primary source)
+settings.load_from_secure_config()
+
+

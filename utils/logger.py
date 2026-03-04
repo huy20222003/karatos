@@ -10,8 +10,6 @@ from typing import Optional
 from rich.console import Console
 from rich.logging import RichHandler
 
-from config.settings import settings
-
 
 class AgentLogger:
     """
@@ -38,6 +36,8 @@ class AgentLogger:
     
     def _setup_logger(self):
         """Configure the logging handlers"""
+        from config.settings import settings
+        
         self.logger.setLevel(getattr(logging, settings.log_level.upper()))
         
         # Remove existing handlers and disable propagation

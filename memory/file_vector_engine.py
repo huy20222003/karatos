@@ -6,6 +6,7 @@ from typing import List, Optional, Any, Dict, Set
 from dataclasses import dataclass, asdict
 from utils.logger import get_logger
 from utils.crypto import encrypt_text, decrypt_text
+from utils.helpers import safe_json_dumps
 
 logger = get_logger()
 
@@ -57,6 +58,7 @@ class FileVectorEngine:
         "METADATA": "sys/metadata",
         "A2A": "memory/a2a",
         "INTUITION": "sys/intuition",
+        "PROMISE": "memory/promises",
         "VAULT": "vault",
         "CACHE": "sys/cache"
     }
@@ -180,7 +182,7 @@ class FileVectorEngine:
         # 1. Update JSON Source of Truth
         data = entry.to_dict()
         if isinstance(entry.content, (dict, list)):
-            plaintext = json.dumps(entry.content, ensure_ascii=False)
+            plaintext = safe_json_dumps(entry.content)
         else:
             plaintext = str(entry.content)
             

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Karatos — Agent Dashboard</title>
+    <link rel="stylesheet" href="/assets/css/main.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <!-- FontAwesome for standard icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js for 2D charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <!-- Three.js for 3D visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.155.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.155.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+
+<body>
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-brand">
+            <div class="brand-icon">K</div>
+            <div class="brand-text">
+                <h1>Karatos</h1>
+                <span class="brand-sub">Agent Dashboard</span>
+            </div>
+        </div>
+
+        <nav class="sidebar-nav">
+            <a href="#/" class="nav-item active" data-page="dashboard">
+                <span class="nav-icon"><i class="fas fa-chart-pie"></i></span>
+                <span>Dashboard</span>
+            </a>
+            <a href="#/memory" class="nav-item" data-page="memory">
+                <span class="nav-icon"><i class="fas fa-brain"></i></span>
+                <span>Memory</span>
+            </a>
+            <a href="#/performance" class="nav-item" data-page="performance">
+                <span class="nav-icon"><i class="fas fa-chart-line"></i></span>
+                <span>Performance</span>
+            </a>
+            <a href="#/chat" class="nav-item" data-page="chat">
+                <span class="nav-icon"><i class="fas fa-comments"></i></span>
+                <span>Chat</span>
+            </a>
+            <a href="#/mcp" class="nav-item" data-page="mcp">
+                <span class="nav-icon"><i class="fas fa-satellite-dish"></i></span>
+                <span>MCP</span>
+            </a>
+            <a href="#/credentials" class="nav-item" data-page="credentials">
+                <span class="nav-icon"><i class="fas fa-lock"></i></span>
+                <span>Credentials</span>
+            </a>
+            <a href="#/logs" class="nav-item" data-page="logs">
+                <span class="nav-icon"><i class="fas fa-clipboard-list"></i></span>
+                <span>Logs</span>
+            </a>
+            <a href="#/settings" class="nav-item" data-page="settings">
+                <span class="nav-icon"><i class="fas fa-cog"></i></span>
+                <span>Settings</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="agent-status" id="agent-status">
+                <span class="status-dot offline"></span>
+                <span class="status-text">Connecting...</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Sidebar Overlay for Mobile -->
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <header class="topbar">
+            <div class="topbar-left">
+                <button class="menu-toggle" id="menu-toggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <h2 class="page-title" id="page-title">Dashboard</h2>
+            </div>
+            <div class="topbar-right">
+                <div class="agent-badge" id="agent-badge">
+                    <span class="badge-mood" id="badge-mood">—</span>
+                    <span class="badge-name" id="badge-name">Agent</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="content-area" id="content-area">
+            <!-- Dynamic content loaded here -->
+            <div class="loading-screen">
+                <div class="spinner"></div>
+                <p>Loading dashboard...</p>
+            </div>
+        </div>
+    </main>
+
+    <script src="/assets/js/api.js"></script>
+    <script src="/assets/js/pages/dashboard.js"></script>
+    <script src="/assets/js/pages/memory.js"></script>
+    <script src="/assets/js/pages/performance.js"></script>
+    <script src="/assets/js/pages/logs.js"></script>
+    <script src="/assets/js/pages/settings.js"></script>
+    <script src="/assets/js/pages/credentials.js"></script>
+    <script src="/assets/js/pages/chat.js?v=20260304"></script>
+    <script src="/assets/js/pages/mcp.js"></script>
+    <script src="/assets/js/app.js"></script>
+</body>
+
+</html>

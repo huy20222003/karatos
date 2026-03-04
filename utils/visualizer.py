@@ -247,10 +247,11 @@ class VisualEnhancer:
                         llm_summary = get_llm_content(resp).strip()
                         
                         if llm_summary:
-                            # Combine intro with summary
-                            clean_text = f"{intro_text}\n\n{llm_summary}" if intro_text else llm_summary
+                            # NGO FIX: Aggressively cleanup intro_text to avoid white-space gaps
+                            clean_intro = intro_text.strip()
+                            clean_text = f"{clean_intro}\n\n{llm_summary}" if clean_intro else llm_summary
                         else:
-                            clean_text = intro_text or "NivaSound Data Report"
+                            clean_text = intro_text.strip() or "NivaSound Data Report"
                     except Exception as summarization_error:
                         logger.error(f"[VISUALIZER] Failed to generate LLM summary: {summarization_error}")
                         clean_text = intro_text or f"NivaSound Data Report for {title}"

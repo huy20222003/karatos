@@ -1,8 +1,11 @@
 import asyncio
 import subprocess
+import re
+import shlex
 from typing import Dict, Any, Optional
 from utils.logger import get_logger
 from utils.security import SecurityShield
+import os
 
 logger = get_logger()
 
@@ -37,10 +40,89 @@ class ShellExecutor:
     Ensures commands are run with timeouts and output is captured securely.
     """
 
+    # Tokens that are clearly NOT file paths (common flags, operators, etc.)
+    _NON_PATH_PATTERNS = re.compile(
+        r'^(-{1,2}[a-zA-Z]'   # flags like -r, --verbose
+        r'|[|>&;]'            # shell operators
+        r'|\d+$'             # pure numbers (e.g., timeout values)
+        r'|https?://'         # URLs
+        r'|[a-zA-Z]+://)',    # other URI schemes
+        re.IGNORECASE
+    )
+
+    @staticmethod
+    def _resolve_paths_in_command(command: str, cwd: str) -> str:
+        """
+        Scan tokens in a shell command and convert relative path-like tokens
+        to absolute paths based on `cwd`.
+
+        A token is considered a path-like candidate if it:
+        - Starts with ./ or ../
+        - Contains path separators (/ or \\) but is not a URL or flag
+        - Is a bare filename that actually exists on disk relative to cwd
+
+        Tokens that are already absolute paths are left untouched.
+        """
+        # We use a simple split approach that respects quoted strings
+        try:
+            tokens = shlex.split(command, posix=False)
+        except ValueError:
+            # If shlex can't parse (e.g., unmatched quotes), fall back to naive split
+            tokens = command.split()
+
+        resolved_parts: list[str] = []
+        changed = False
+
+        for token in tokens:
+            # Strip surrounding quotes for analysis, but keep them for reconstruction
+            stripped = token.strip('"').strip("'")
+
+            # Skip the first token (the command itself) if it has no path separators
+            # Skip empty tokens, flags, operators, URLs, pure numbers
+            if ShellExecutor._NON_PATH_PATTERNS.match(stripped):
+                resolved_parts.append(token)
+                continue
+
+            # Check if this looks like a path candidate
+            is_path_candidate = False
+
+            if stripped.startswith('./') or stripped.startswith('.\\'):
+                is_path_candidate = True
+            elif stripped.startswith('../') or stripped.startswith('..\\'):
+                is_path_candidate = True
+            elif os.sep in stripped or '/' in stripped:
+                # Contains path separators → likely a path
+                is_path_candidate = True
+            elif stripped.startswith('~'):
+                is_path_candidate = True
+
+            if is_path_candidate:
+                # Already absolute? Leave it.
+                if os.path.isabs(stripped):
+                    resolved_parts.append(token)
+                    continue
+
+                # Expand ~ and resolve relative to cwd
+                expanded = os.path.expanduser(stripped)
+                absolute = os.path.normpath(os.path.join(cwd, expanded))
+                resolved_parts.append(f'"{absolute}"')
+                changed = True
+                logger.debug(f"[SHELL] Path resolved: '{stripped}' -> '{absolute}'")
+            else:
+                resolved_parts.append(token)
+
+        if changed:
+            resolved_cmd = ' '.join(resolved_parts)
+            logger.info(f"[SHELL] Paths resolved: {command}  ->  {resolved_cmd}")
+            return resolved_cmd
+
+        return command
+
     @staticmethod
     async def execute(command: str, timeout: int = 30, bypass_security: bool = False) -> Dict[str, Any]:
         """
         Execute a shell command with security validation and output capture.
+        Relative paths in the command are automatically resolved to absolute paths.
         """
         # 1. Security Validation (Skip if already approved)
         if not bypass_security:
@@ -65,15 +147,20 @@ class ShellExecutor:
                     "command": command
                 }
 
-        # 2. Execution
-        logger.info(f"[SHELL] Executing: {command}")
+        # 2. Resolve relative paths to absolute paths
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        command = ShellExecutor._resolve_paths_in_command(command, project_root)
+
+        # 3. Execution
+        logger.info(f"[SHELL] Executing: {command} (CWD: {project_root})")
         
         try:
-            # Create subprocess
+            # Create subprocess with explicit CWD to avoid path drift
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                cwd=project_root
             )
 
             # Wait for completion with timeout

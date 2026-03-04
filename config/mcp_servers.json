@@ -25,6 +25,12 @@
                 "--chrome-arg=--no-sandbox",
                 "--chrome-arg=--disable-infobars"
             ]
+        },
+        "mailbox": {
+            "command": "http://127.0.0.1:8000/sse",
+            "env": {
+                "x-mailbox-token": "${MAILBOX_AUTH_TOKEN}"
+            }
         }
     }
 }

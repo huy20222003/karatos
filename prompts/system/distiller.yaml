@@ -45,6 +45,8 @@ distiller: |
   ├──────────────┼─────────────────────────────────────────────────────────┤
   │ GOAL         │ Active objectives or projects currently in progress.     │
   ├──────────────┼─────────────────────────────────────────────────────────┤
+  │ PROMISE      │ Commitments or future tasks the bot promised to do.      │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
   │ METADATA     │ System details: OS, paths, platform context.             │
   ├──────────────┼─────────────────────────────────────────────────────────┤
   │ PROCEDURAL   │ Step-by-step workflows: "how-to" for tasks or systems.   │
@@ -79,6 +81,7 @@ distiller: |
   [{"category": "BELIEF",       "content": "User values clean code over speed — no hardcoding.", "importance": 0.95}]
   [{"category": "EMOTION",      "content": "User expressed excitement about the new memory system.", "importance": 0.7}]
   [{"category": "HABIT",        "content": "User always reviews code before merging, prefers PR workflow.", "importance": 0.8}]
+  [{"category": "PROMISE",      "content": "Promised to remind the user to drink water at 8 AM tomorrow.", "importance": 0.95}]
   [{"category": "LEARNING",     "content": "BM25 k1=1.5, b=0.75 are standard IR defaults.", "importance": 0.7}]
 
   ─────────────────────────────────────────────────────────

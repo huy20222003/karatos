@@ -305,18 +305,24 @@ async def chat_route_node(state: ChatState) -> ChatState:
             decision = "CHAT"
     
     # NGO SAFETY OVERRIDE (Phase 26): Enforce Private Chat integrity using metadata.
+    channel = state.get("context", {}).get("channel", "")
     chat_type = state.get("context", {}).get("channel_metadata", {}).get("chat_type")
     if not chat_type and processed:
         chat_type = getattr(processed, "metadata", {}).get("chat_type")
     
-    is_private_chat = (chat_type == "private")
+    # GUI is always a 1-on-1 private conversation
+    is_private_chat = (chat_type == "private") or (channel == "gui")
     
     if is_private_chat and decision == "NONE":
-        if msg.strip() or state.get("context", {}).get("vision_extracted"):
+        has_text = bool(msg.strip())
+        has_vision = bool(state.get("context", {}).get("vision_extracted"))
+        has_audio = bool(state.get("context", {}).get("audio_base64") or state.get("context", {}).get("audio_transcript"))
+        
+        if has_text or has_vision or has_audio:
             logger.info("[ROUTER] 🛡️ Private Chat Constraint: Overriding NONE -> CHAT to maintain interaction.")
             decision = "CHAT"
             res["decision"] = "CHAT"
-            res["rationale"] = "Private chat requirement: AI must respond to direct user messages."
+            res["rationale"] = "Private chat/Multimedia requirement: AI must respond to direct user messages."
     
     # Phase 21.3: Bayesian Fusion of Intuition (ACR) and Conscious Reasoning (LLM)
     llm_conf = res.get("confidence")
@@ -352,7 +358,8 @@ async def chat_route_node(state: ChatState) -> ChatState:
     rationale = res.get("rationale", "No rationale provided")
     logger.info(f"[ROUTER] Rationale: {rationale}")
     
-    state["thoughts"].append(f"Router: Conscious decision `{decision}` (Rationale: {rationale})")
+    state["thoughts"].append(f"Router: User intent classified as `{res.get('intent', 'Conversation')}`. Vibe is {state.get('mood', 'OPTIMISTIC')}. Confidence: {state['confidence']*100:.1f}%.")
+    state["thoughts"].append(f"Logic: {rationale}")
     
     # Learning: Record this LLM decision for all algorithms
     ppf.record(ppf_features, decision)

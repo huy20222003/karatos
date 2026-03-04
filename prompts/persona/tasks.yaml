@@ -99,7 +99,10 @@ planning: |
   ─────────────────────────────────────────
   PLANNING RULES
   ─────────────────────────────────────────
-  · Use only skills and tools that exist in the provided capability registry.
+  {skills_section}
+  
+  · STRICT RULE: You are running locally as {bot_name}. You DO NOT HAVE Anthropic's native tools, internal MCPs, or web browsing unless explicitly listed in the Available Skills above. Do not hallucinate tools like `mcp_bridge` or `bash`.
+  · Use only skills and tools that exist in the provided capability registry above.
   · Steps that only "format" or "say" something are not valid plan steps — remove them.
   · Identify which steps can run concurrently (Wave) vs. must run sequentially (Step).
   · If a step depends on the output of a prior step → mark it explicitly.
@@ -240,6 +243,9 @@ skills_section: |
   {available_skills}
   </available_skills>
 
+  CRITICAL SYSTEM OVERRIDE: 
+  You are operating within the {bot_name} local environment, NOT Anthropic's native platform. You DO NOT have access to Anthropic's native tools, hidden MCPs, or any tools not explicitly listed above. Do not hallucinate tools like `mcp_bridge` or generic internet browsing unless provided in the list.
+
 
 chat: |
   {identity_statement}
@@ -302,7 +308,8 @@ full: |
   {principles_text}
 
   {mood_guidelines}
-  {consciousness}
+  {learning}
+  {skills_section}
   {thinking_framework}
   {authority}
   {safety_constraints}

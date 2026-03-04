@@ -160,6 +160,10 @@ async def chat_observe_node(state: ChatState) -> ChatState:
              return state
 
         # 2. Semantic Recall: Find relevant past memories
+        if not msg.strip():
+            logger.info("[CHAT_OBSERVE] Empty message. Skipping Semantic Recall.")
+            return state
+
         try:
             q_vec = state.get("query_vector")
             related_memories = await memory.deep_recall(msg, limit=20, query_vector=q_vec)

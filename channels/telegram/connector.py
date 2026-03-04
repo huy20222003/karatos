@@ -70,36 +70,35 @@ class TelegramConnector:
                 if isinstance(response, dict):
                     reply_id = response.get("reply_to")
                     payload = {k: v for k, v in response.items() if k != "reply_to"}
+                
+                # B2B INTERCEPTION: Route response via Mailbox if replying to another bot
+                replied_to_is_bot = message.metadata.get("replied_to_is_bot", False)
+                replied_to_username = message.metadata.get("replied_to_username")
+                
+                my_username = getattr(self.telegram, 'username', None)
+                
+                if replied_to_is_bot and replied_to_username and replied_to_username != my_username:
+                    try:
+                        from tools.registry import get_tool_registry
+                        registry = get_tool_registry()
+                        
+                        # Extract string content from payload
+                        content_str = payload if isinstance(payload, str) else payload.get("text", str(payload))
+                        
+                        logger.info(f"[TelegramConnector] 📬 Cross-bot reply detected. Dropping copy to @{replied_to_username} via Mailbox.")
+                        await asyncio.wait_for(registry.dispatch("mcp:mailbox:drop_message", {
+                            "sender": my_username or "Karatos",
+                            "target": f"@{replied_to_username}",
+                            "chat_id": str(message.chat_id),
+                            "content": content_str
+                        }), timeout=5.0)
+                    except Exception as e:
+                        logger.error(f"[TelegramConnector] Failed to route cross-bot reply via Mailbox: {e}")
+                
+                # Fallback / Normal routing
+                # Send the original message to Telegram
                 await self.telegram.send(payload, recipient=message.chat_id, reply_to=reply_id)
                 
-                # --- INTER-AGENT MESSAGING (Brain 3.0) ---
-                mentions = re.findall(r'@[a-zA-Z0-9_]+', content)
-                text_content = content
-                
-                if mentions:
-                    bot_username = getattr(self.telegram, 'username', None) or getattr(settings, 'bot_username', 'SystemBot')
-                    my_username = f"@{bot_username}" if not str(bot_username).startswith('@') else bot_username
-                    
-                    from tools.registry import get_tool_registry
-                    registry = get_tool_registry()
-                    
-                    for m in mentions:
-                        if m.lower() != my_username.lower():
-                            # Target agent name (e.g. '@Niva' -> 'niva')
-                            agent_name = m.lstrip('@').lower()
-                            agent_tool = f"agent:{agent_name}"
-                            
-                            logger.info(f"[Inter-Agent] 📤 Forwarding message to {m} via {agent_tool}")
-                            try:
-                                # Dispatch to the dynamic agent tool
-                                rpc_res = await registry.dispatch(agent_tool, {
-                                    "message": text_content,
-                                    "chat_id": str(message.chat_id),
-                                    "sender": my_username
-                                })
-                                logger.debug(f"[Inter-Agent] Result for {m}: {rpc_res.get('status')}")
-                            except Exception as e:
-                                logger.error(f"[Inter-Agent] Failed to message {m}: {e}")
                             
         except Exception as e:
             logger.error(f"[TelegramConnector] Error handling message: {e}")
@@ -117,12 +116,9 @@ class TelegramConnector:
         # 1.5 Sync Identity back to Agent
         self.agent.refresh_identity()
         
-        # 1.6 Start Userbot for Dynamic Peer Discovery
-        try:
-            from utils.userbot_manager import get_userbot_manager
-            asyncio.create_task(get_userbot_manager().start())
-        except Exception as e:
-            logger.warning(f"[TelegramConnector] Failed to initialize Userbot in background: {e}")
+        # 1.6 Register with Mailbox MCP
+        await self._register_with_mailbox()
+        
             
         # 2. Send Startup Notification (Brain-Powered)
         if self.admin_chat:
@@ -150,7 +146,11 @@ class TelegramConnector:
                 # 1. Poll for messages (Background Task)
                 if not hasattr(self, "_polling_task") or self._polling_task.done():
                     logger.info("[TelegramConnector] Spawning polling task.")
-                    self._polling_task = asyncio.create_task(self.telegram.start(handler=self._handle_message))
+                    # Main polling task
+                    self._polling_task = asyncio.create_task(
+                        self.telegram.start(handler=self._handle_message),
+                        name="TelegramCollector_Loop"
+                    )
                 
                 # 3. Scheduled Tasks
                 await self._check_patrol()
@@ -212,11 +212,108 @@ class TelegramConnector:
             logger.error(f"[TelegramConnector] Failed to send brain greeting: {e}")
             await self.telegram.send("✅ Brain Online.", recipient=self.admin_chat)
 
+    async def _register_with_mailbox(self):
+        """Register bot identity with the Mailbox MCP server."""
+        try:
+            from core.identity import AgentIdentity
+            from tools.registry import get_tool_registry
+            
+            identity = AgentIdentity()
+            name = identity.active_name or settings.bot_name or "Karatos"
+            username = settings.bot_username or "@karatos_bot"
+            
+            logger.info(f"[TelegramConnector] Registering with Mailbox: {name} ({username})")
+            
+            registry = get_tool_registry()
+            # Explicitly use mcp:mailbox:register_bot
+            result = await registry.dispatch("mcp:mailbox:register_bot", {
+                "name": name,
+                "username": username
+            })
+            
+            if result.get("status") == "success":
+                logger.info(f"[TelegramConnector] Mailbox registration successful: {result.get('result')}")
+            else:
+                logger.warning(f"[TelegramConnector] Mailbox registration failed: {result.get('message')}")
+                
+        except Exception as e:
+            logger.debug(f"[TelegramConnector] Error during Mailbox registration: {e}")
+
+
+    async def _poll_mailbox(self):
+        """Poll the Mailbox MCP for new messages and process them."""
+        try:
+            from tools.registry import get_tool_registry
+            registry = get_tool_registry()
+            
+            username = settings.bot_username or "@karatos_bot"
+            name = settings.bot_name or "Karatos"
+            
+            # Check for both handle and name
+            for identifier in [username, name]:
+                if not identifier: continue
+                
+                try:
+                    # Timeout to prevent hanging on network issues
+                    result = await asyncio.wait_for(
+                        registry.dispatch("mcp:mailbox:check_mailbox", {"my_username": identifier}),
+                        timeout=5.0
+                    )
+                    
+                    if result.get("status") == "success":
+                        import json
+                        try:
+                            # result.get("data") contains raw JSON string from server
+                            raw_data = result.get("data", "[]")
+                            messages = json.loads(raw_data)
+                            if messages:
+                                logger.info(f"[TelegramConnector] 📬 Received {len(messages)} messages from Mailbox for {identifier}")
+                                for msg in messages:
+                                    await self._process_mailbox_message(msg)
+                        except Exception as e:
+                            logger.error(f"[TelegramConnector] Failed to parse mailbox messages: {e}")
+                except asyncio.TimeoutError:
+                    logger.debug(f"[TelegramConnector] Mailbox poll timeout for {identifier}")
+                except Exception as e:
+                    logger.error(f"[TelegramConnector] Mailbox poll error for {identifier}: {e}")
+                        
+        except Exception as e:
+            logger.debug(f"[TelegramConnector] Mailbox polling error: {e}")
+
+    async def _process_mailbox_message(self, msg: dict):
+        """Inject a mailbox message into the agent's chat for processing."""
+        sender = msg.get("sender", "Unknown")
+        content = msg.get("content", "")
+        chat_id = msg.get("chat_id") or self.admin_chat
+        
+        logger.info(f"[TelegramConnector] 📩 Processing peer message from {sender}")
+        
+        # Format as a system-injected message to the agent
+        formatted_msg = f"[BOT_MAILBOX] Message from {sender}:\n\n{content}"
+        
+        # Send to Telegram (Admin) so the user sees it too
+        if self.admin_chat:
+             await self.telegram.send(f"📬 *New Mailbox Message*\nFrom: `{sender}`\n\n{content}", recipient=self.admin_chat)
+        
+        # Inject into Brain for autonomous response
+        # Using a named task so it's visible in cleanup diagnostics
+        asyncio.create_task(
+            self.agent.chat(formatted_msg, chat_id=str(chat_id)),
+            name=f"MailboxProcessor_{sender}_{datetime.utcnow().timestamp()}"
+        )
+
     # _check_mailbox removed in Brain 2.6 in favor of Direct Agent RPC
 
 
     async def _check_patrol(self):
-        """Run scheduled patrol if time has passed."""
+        """Run scheduled patrol if time has passed and check mailbox."""
+        # 1. Check Mailbox for incoming peer messages (High Priority)
+        await self._poll_mailbox()
+
+        # 2. Daily Report
+        await self._check_daily_report()
+
+        # 3. Braing Patrol
         now = datetime.utcnow()
         last_patrol = getattr(self.agent, "_last_patrol_time", None)
         
@@ -243,9 +340,30 @@ class TelegramConnector:
             # Social Impulse — brain's emergent desire to chat with a peer
             social = final_state.get("social_impulse")
             if social:
+                target_peer = social.get("target_peer", "")
+                message = social.get("message", "")
                 social_chat = social.get("chat_id") or self.admin_chat
-                logger.info(f"[TelegramConnector] 💬 Brain wants to chat with @{social['target_peer']}")
-                await self.telegram.send(social["message"], recipient=social_chat)
+                
+                logger.info(f"[TelegramConnector] 💬 Brain wants to chat with {target_peer}")
+                
+                # If target starts with @ and it's not the admin, or if flagged as bot
+                # For now, if we have mailbox and it's a bot-like target, use mailbox
+                if target_peer.startswith("@") and target_peer != settings.telegram_chat_id:
+                     try:
+                         from tools.registry import get_tool_registry
+                         registry = get_tool_registry()
+                         logger.info(f"[TelegramConnector] 📬 Dropping social impulse into Mailbox for {target_peer}")
+                         await registry.dispatch("mcp:mailbox:drop_message", {
+                             "sender": settings.bot_name or "Karatos",
+                             "target": target_peer,
+                             "chat_id": str(social_chat),
+                             "content": message
+                         })
+                     except Exception as e:
+                         logger.error(f"[TelegramConnector] Mailbox routing failed: {e}")
+                         await self.telegram.send(message, recipient=social_chat)
+                else:
+                    await self.telegram.send(message, recipient=social_chat)
 
     async def _check_daily_report(self):
         """Generate and send daily report at 23:00 UTC."""

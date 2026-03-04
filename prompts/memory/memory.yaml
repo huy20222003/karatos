@@ -3,35 +3,92 @@
 # ============================================================
 
 memory_categories: |
-  Memory is organized into seven categories. Every stored item must belong to exactly one.
+  Memory is organized into cognitive categories mirroring how humans store and recall information.
+  Every stored item must belong to exactly one category.
 
+  ─────────────────────────────────────────
+  KNOWLEDGE & FACTS
+  ─────────────────────────────────────────
   ● FACT         — Verified, objective knowledge about users, the world, or the system.
                    Must be traceable to a confirmed source or tool result. Never inferred.
 
-  ● PERSONA      — Identity-defining traits, communication preferences, and behavioral patterns
-                   of {bot_name} as shaped by accumulated experience.
+  ● LEARNING     — Verified knowledge and confirmed technical facts acquired through experience.
+                   Distinguished from FACT by being self-discovered rather than externally given.
 
-  ● RELATIONSHIP — The evolving state of trust, rapport, and interaction history
-                   between {bot_name} and {user_pronoun} or peer agents.
-
-  ● GOAL         — Active and long-term objectives established by {user_pronoun} or the system.
-                   Includes constraints, deadlines, and success criteria where known.
+  ● PROCEDURAL   — How-to knowledge: step-by-step processes, command sequences,
+                   and operational procedures verified through execution.
 
   ● METADATA     — Technical context used to optimize query execution:
                    schema snapshots, known table structures, index hints, enum values.
 
-  ● LOGISTIC     — Operational details: schedules, recurring tasks, configuration states,
-                   deployment parameters, and environment-specific settings.
+  ─────────────────────────────────────────
+  IDENTITY & VALUES
+  ─────────────────────────────────────────
+  ● PERSONA      — Identity-defining traits, communication preferences, and behavioral patterns
+                   of {bot_name} as shaped by accumulated experience.
 
-  ● SOCIAL       — Observed interaction patterns with peer agents:
-                   communication style, role boundaries, delegation history.
+  ● BELIEF       — Core values, guiding principles, and ethical stances
+                   that inform {bot_name}'s decision-making framework.
+
+  ● INTUITION    — Internal hunches, subconscious pattern recognitions, and gut feelings
+                   derived from accumulated experience. Lower confidence but high signal value.
 
   ─────────────────────────────────────────
-  STORAGE RULE
+  EXPERIENCE & REFLECTION
+  ─────────────────────────────────────────
+  ● CONTEXT      — Current session and conversation context. Ephemeral by nature.
+
+  ● EXPERIENCE   — Past events and technical encounters worth remembering.
+                   Stored with outcome (success/failure) for future reference.
+
+  ● DECISION     — Choices made and their outcomes. Used for pattern learning
+                   and avoiding repeated mistakes.
+
+  ● REFLECTION   — Self-improvement lessons extracted from past cycles.
+                   What went wrong, what went right, what to do differently.
+
+  ● HABIT        — Recurring behavioral patterns, both {bot_name}'s own
+                   and observed patterns of {user_pronoun}.
+
+  ─────────────────────────────────────────
+  SOCIAL & RELATIONAL
+  ─────────────────────────────────────────
+  ● RELATIONSHIP — The evolving state of trust, rapport, and interaction history
+                   between {bot_name} and {user_pronoun} or peer agents.
+
+  ● USER_PROFILE — User preferences, communication style, and personal details
+                   voluntarily shared by {user_pronoun}.
+
+  ● USER_HISTORY — Historical record of user actions, requests, and outcomes.
+
+  ● SENTIMENT    — Emotional state tracking for {user_pronoun} across interactions.
+
+  ● A2A          — Agent-to-agent interaction records: delegation history,
+                   peer communication patterns, and collaboration outcomes.
+
+  ─────────────────────────────────────────
+  GOALS & OPERATIONS
+  ─────────────────────────────────────────
+  ● GOAL         — Active and long-term objectives established by {user_pronoun} or the system.
+                   Includes constraints, deadlines, and success criteria where known.
+
+  ● EMOTION      — How specific events felt to {bot_name} — used to calibrate
+                   future emotional responses and mood evolution.
+
+  ● SYSTEM       — Technical system state: service health, configuration snapshots,
+                   deployment status, and infrastructure observations.
+
+  ● VAULT        — Encrypted secrets and sensitive credentials.
+                   Access-controlled. Never exposed in plain text responses.
+
+  ─────────────────────────────────────────
+  STORAGE RULES
   ─────────────────────────────────────────
   · Only store what is verified. Inferences and assumptions are not facts.
   · If a memory item becomes outdated or contradicted by new evidence → replace it. Never stack duplicates.
   · Every stored item must include: category, timestamp, confidence level, and source.
+  · Category selection priority: use the MOST SPECIFIC category that fits. E.g., a verified fact
+    about a user's preference → USER_PROFILE, not FACT.
 
 
 experience_validator: |

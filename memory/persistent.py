@@ -151,6 +151,10 @@ class PersistentMemory:
         if query_vector is None:
             query_vector = await self.embedder.get_embedding(query_text)
         
+        if query_vector is None:
+            logger.warning("[MEMORY] Semantic search skipped: No query vector available.")
+            return []
+            
         q_vec = np.array(query_vector)
         cat_str = category.value if category else None
         
@@ -228,10 +232,16 @@ class PersistentMemory:
         await self.remember(decision_id, value, MemoryCategory.DECISION, confidence)
         return decision_id
 
-    async def record_chat_message(self, chat_id: str, role: str, content: str, episode_id: Optional[str] = None):
+    async def record_chat_message(self, chat_id: str, role: str, content: str, episode_id: Optional[str] = None, metadata: Optional[dict] = None):
         key = f"chat:{chat_id}:{datetime.utcnow().timestamp()}"
         value = {"role": role, "content": content}
-        if episode_id: value["metadata"] = {"episode_id": episode_id}
+        
+        # Combine explicitly provided metadata with episode_id
+        meta = metadata.copy() if metadata else {}
+        if episode_id: meta["episode_id"] = episode_id
+        
+        if meta: value["metadata"] = meta
+        
         await self.remember(key, value, MemoryCategory.CONTEXT, 0.2)
         
         # Distillation (Memory 3.0)

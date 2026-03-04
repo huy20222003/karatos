@@ -6,7 +6,6 @@ Only the agent (with the key from .env) can read the stored memories.
 import os
 import base64
 from cryptography.fernet import Fernet
-from config.settings import settings
 from utils.logger import get_logger
 
 logger = get_logger()
@@ -16,6 +15,7 @@ _cipher: Fernet = None
 
 def _get_or_create_key() -> bytes:
     """Load encryption key from settings/env, or generate and persist one."""
+    from config.settings import settings
     key = settings.memory_key
     
     if key:

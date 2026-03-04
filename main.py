@@ -89,6 +89,19 @@ def parse_args():
         help="Run exactly one observation cycle then exit"
     )
     
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Start the GUI dashboard server alongside the agent"
+    )
+    
+    parser.add_argument(
+        "--gui-port",
+        type=int,
+        default=7860,
+        help="Port for the GUI dashboard (default: 7860)"
+    )
+    
     return parser.parse_args()
 
 
@@ -195,8 +208,12 @@ async def run_with_telegram():
         tasks = [t for t in asyncio.all_tasks() if t is not current_task]
         
         if tasks:
-            logger.info(f"[MAIN] Cleaning up {len(tasks)} remaining background tasks...")
-            for t in tasks: t.cancel()
+            logger.info(f"[MAIN] Cleaning up {len(tasks)} remaining background tasks:")
+            for t in tasks:
+                try:
+                    logger.info(f"  - {t.get_name() or str(t)}")
+                    t.cancel()
+                except: pass
             await asyncio.gather(*tasks, return_exceptions=True)
 
 async def run_agent():
@@ -227,7 +244,12 @@ async def run_agent():
         current_task = asyncio.current_task()
         tasks = [t for t in asyncio.all_tasks() if t is not current_task]
         if tasks:
-            for t in tasks: t.cancel()
+            logger.info(f"[MAIN] Cleaning up {len(tasks)} remaining background tasks:")
+            for t in tasks:
+                try:
+                    logger.info(f"  - {t.get_name() or str(t)}")
+                    t.cancel()
+                except: pass
             await asyncio.gather(*tasks, return_exceptions=True)
 
 def main():
@@ -268,8 +290,14 @@ def main():
         success = asyncio.run(run_single_cycle())
         sys.exit(0 if success else 1)
     
-    # Run with or without Telegram
-    if settings.telegram_bot_token and settings.telegram_chat_id:
+    # Run with or without Telegram (optionally with GUI)
+    if args.gui:
+        console.print(f"[green]Starting Brain with GUI Dashboard on port {args.gui_port}...[/green]")
+        try:
+            asyncio.run(run_with_gui(args.gui_port))
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Shutdown requested.[/yellow]")
+    elif settings.telegram_bot_token and settings.telegram_chat_id:
         console.print("[green]Starting Brain with Modular Telegram Connector...[/green]")
         try:
             asyncio.run(run_with_telegram())
@@ -281,6 +309,45 @@ def main():
             asyncio.run(run_agent())
         except KeyboardInterrupt:
             console.print("\n[yellow]Shutdown requested.[/yellow]")
+
+async def run_with_gui(port: int = 8080):
+    """Run agent with GUI dashboard (optionally with Telegram too)."""
+    from core.agent import get_agent
+    from gui.server import start_server
+
+    logger.info("[MAIN] Initializing Agent for GUI mode...")
+    agent = get_agent()
+
+    if not await agent.initialize():
+        logger.error("[MAIN] Failed to initialize agent components.")
+        return
+
+    tasks = []
+
+    # Start GUI server
+    tasks.append(asyncio.create_task(start_server(agent, port)))
+
+    # Optionally start Telegram alongside GUI
+    if settings.telegram_bot_token and settings.telegram_chat_id:
+        from channels.telegram.connector import TelegramConnector
+        connector = TelegramConnector(agent)
+        tasks.append(asyncio.create_task(connector.start()))
+        logger.info("[MAIN] Telegram connector running alongside GUI.")
+
+    try:
+        await asyncio.gather(*tasks)
+    except KeyboardInterrupt:
+        logger.info("[MAIN] Stopped by User (Ctrl+C). Graceful exit initiated...")
+    finally:
+        for t in tasks:
+            t.cancel()
+        await agent.shutdown()
+        current_task = asyncio.current_task()
+        remaining = [t for t in asyncio.all_tasks() if t is not current_task]
+        for t in remaining:
+            t.cancel()
+        await asyncio.gather(*remaining, return_exceptions=True)
+
 
 if __name__ == "__main__":
     main()

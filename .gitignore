@@ -71,6 +71,9 @@ docs/
 #tests
 tests/
 
+#config
+secure_config.enc.json
+
 #scripts
 scripts/
 claude.bat

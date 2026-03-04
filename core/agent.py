@@ -8,8 +8,10 @@ import os
 from datetime import datetime
 from typing import Optional, Any, Union
 
+from config.secure_config import CONFIG_PATH
 from config.settings import settings
 from utils.logger import get_logger
+from utils.config_watcher import start_config_watcher
 from core.brain import Brain
 from core.queue import LaneQueue, get_queue, QueuedAction
 from core.input_pipeline import InputPipeline, ProcessedInput
@@ -47,6 +49,7 @@ class BrainAgent:
         self.short_memory = ShortTermMemory() # RAM-based short-term memory
         self.input_pipeline = InputPipeline() # Central input processor
         self.database = None  # Lazy loaded
+        self._universal_config_observer = None # Universal config watcher
         
         self._running = False
         self._cycle_count = 0
@@ -54,6 +57,10 @@ class BrainAgent:
         self._last_patrol_time = datetime.utcnow() # Initialize to now to avoid immediate patrol
         self._actions_this_hour = 0
         self._hour_start = datetime.utcnow()
+        
+        # Live mood/energy (updated after each brain cycle)
+        self._last_mood = "OPTIMISTIC"
+        self._last_energy = 1.0
         
         # Heartbeat intervals (seconds)
         self.patrol_interval = settings.scan_interval_minutes * 60
@@ -98,6 +105,13 @@ class BrainAgent:
             logger.info("All agent components initialized successfully")
             logger.info(f"Brain stats: {self.brain.get_stats()}")
             
+            # Start universal config watcher for auto-reload (Monitoring entire config/ directory)
+            try:
+                config_dir = os.path.dirname(CONFIG_PATH)
+                self._universal_config_observer = start_config_watcher(config_dir, self.reload_system, is_directory=True)
+            except Exception as e:
+                logger.warning(f"[AGENT] Failed to start universal config watcher: {e}")
+            
             self._running = True  # Set to True once initialized
             logger.debug("[AGENT] initialize() complete.")
             return True
@@ -114,6 +128,29 @@ class BrainAgent:
         self.bot_username = settings.bot_username or "default_bot"
         if old_username != self.bot_username:
             logger.info(f"[AGENT] Identity binding updated: @{old_username} -> @{self.bot_username}")
+
+    def reload_system(self):
+        """Universal reload for all agent components based on config changes."""
+        logger.info("[AGENT] 🔄 Universal Config Change Detected. Reloading system...")
+        try:
+            # 1. Reload main settings
+            settings.load_from_secure_config()
+            
+            # 2. Reload MCP Bridge
+            from tools.mcp_bridge import get_mcp_bridge
+            get_mcp_bridge().reload()
+            
+            # 3. Clear LLM cache
+            from core.brain.model import SharedModelProvider
+            SharedModelProvider.clear_cache()
+            
+            # 4. Update runtime params
+            self.patrol_interval = settings.scan_interval_minutes * 60
+            self.refresh_identity()
+            
+            logger.info("[AGENT] ✅ System reloaded and synchronized successfully.")
+        except Exception as e:
+            logger.error(f"[AGENT] ❌ Universal reload failed: {e}")
             
     async def run(self):
         """
@@ -183,6 +220,31 @@ class BrainAgent:
             
             logger.observation(f"Retrieved {len(audit_logs)} audit log entries")
             
+            # --- ORGANIC CALENDAR CHECK (Memory Injection) ---
+            try:
+                from tools.calendar_tool import CalendarTool
+                # Using a 30-minute lookahead to give the agent time to prepare
+                calendar_res = await CalendarTool.check_reminders(lookahead_minutes=30)
+                
+                if calendar_res.get("status") == "success":
+                    due_reminders = calendar_res.get("data", {}).get("due_reminders", [])
+                    
+                    for reminder in due_reminders:
+                        # Synthesize an internal event
+                        audit_logs.append({
+                            "id": reminder.get("id", f"c_{self._cycle_count}"),
+                            "event_type": "INTERNAL_URGE",
+                            "status": "warning", # Flag as warning so decider pays attention
+                            "message": f"[CALENDAR REMINDER] It is time for event: '{reminder.get('title')}'. Expected Time: {reminder.get('start')}. Description: {reminder.get('description', '')}. I MUST fulfill this now.",
+                            "target_id": "System",
+                            "timestamp": datetime.utcnow().isoformat()
+                        })
+                        
+                    if due_reminders:
+                        logger.info(f"[CALENDAR] Injected {len(due_reminders)} calendar reminders into the agent's subconscious.")
+            except Exception as e:
+                logger.error(f"[CALENDAR] Failed to process calendar reminders: {e}")
+                
             # --- MEDITATION LOGIC (Idle Evolution) ---
             is_meditation = False
             if not audit_logs:
@@ -208,6 +270,10 @@ class BrainAgent:
             # Run the 6-node pipeline
             logger.info("Starting LangGraph thinking cycle...")
             final_state = await self.brain.run_cycle(audit_logs, context)
+            
+            # Track mood/energy for dashboard
+            self._last_mood = final_state.get("mood", self._last_mood)
+            self._last_energy = final_state.get("energy_level", self._last_energy)
             
             # Handle decision
             if final_state.get("decision"):
@@ -392,7 +458,15 @@ class BrainAgent:
             # --- NGO FIX: Record User Message (Start of cycle) ---
             episode_id = ctx.get("episode_id") or f"ep_{int(datetime.utcnow().timestamp())}"
             ctx["episode_id"] = episode_id # Ensure it's in context for Brain
-            await self.memory.record_chat_message(chat_id, "user", processed.clean_text, episode_id=episode_id)
+            
+            user_meta = {}
+            if context:
+                # Only persist distilled text knowledge — never raw media references.
+                # The Distiller will synthesize insights from the full conversation.
+                if context.get("audio_transcript"):
+                    user_meta["audio_transcript"] = context["audio_transcript"]
+                
+            await self.memory.record_chat_message(chat_id, "user", processed.clean_text, episode_id=episode_id, metadata=user_meta)
             
             # Note: Brain.chat will now use ctx["processed"] if available
             final_state = await self.brain.chat(processed.clean_text, chat_id, ctx)
@@ -402,6 +476,10 @@ class BrainAgent:
                 return None
                 
             response = final_state.get("response")
+            
+            # Track mood/energy for dashboard
+            self._last_mood = final_state.get("mood", self._last_mood)
+            self._last_energy = final_state.get("energy_level", self._last_energy)
             
             # NONE classification: Brain decided this message is not for us — stay silent
             if response is None:
@@ -414,16 +492,213 @@ class BrainAgent:
                 await self.memory.record_chat_message(chat_id, "assistant", resp_text, episode_id=episode_id)
             
             # Standardize response to dict structure
+            # Include rich metadata from final_state for GUI/Dashboard
+            rich_result = {
+                "thoughts": final_state.get("thoughts", []),
+                "plan": final_state.get("plan", []),
+                "tools_used": final_state.get("tools_used", []),
+                "logic": final_state.get("logic", ""),
+                "status": final_state.get("status"),
+                "approval_id": final_state.get("approval_id"),
+                "episode_id": episode_id
+            }
+
             if isinstance(response, str):
-                return {"text": response, "type": "text"}
+                rich_result.update({"text": response, "type": "text"})
             elif isinstance(response, dict):
-                return response
+                rich_result.update(response)
+                if "text" not in rich_result and "response" in rich_result:
+                    rich_result["text"] = rich_result["response"]
             else:
-                return {"text": str(response), "type": "text"}
+                rich_result.update({"text": str(response), "type": "text"})
+                
+            return rich_result
                 
         except Exception as e:
             logger.error(f"[AGENT] Chat error: {e}")
             return {"text": "I encountered a problem while processing your request.", "error": str(e)}
+        finally:
+            from utils.file_handler import cleanup_temp_file
+            if context and context.get("file_path"):
+                cleanup_temp_file(context["file_path"], source="AGENT_CHAT")
+
+    async def chat_stream(self, message: Union[str, ProcessedInput], chat_id: str, context: Optional[dict] = None) -> Any:
+        """
+        Async generator that streams chat events in real-time.
+        Yields JSON-serializable dictionaries representing events from the graph.
+        """
+        import json
+        
+        # 1. Handle Input Type (Preserve Metadata)
+        if isinstance(message, str):
+            processed = await self.input_pipeline.process(
+                message, 
+                source=context.get("channel", "telegram") if context else "telegram",
+                chat_id=chat_id
+            )
+        else:
+            processed = message
+
+        # 2. Build context
+        ctx = {
+            "time": datetime.utcnow().timestamp(),
+            "channel": context.get("channel", "telegram") if context else "telegram",
+            "chat_id": chat_id,
+            "bot_username": self.bot_username,
+            "memory": self.memory,
+            "short_memory": self.short_memory,
+            "processed": processed 
+        }
+        
+        if context:
+            ctx.update(context)
+            
+        episode_id = ctx.get("episode_id") or f"ep_{int(datetime.utcnow().timestamp())}"
+        ctx["episode_id"] = episode_id 
+        
+        # We yield a starting event
+        yield {"type": "start", "message": "Starting processing...", "episode_id": episode_id}
+
+        try:
+            # 3. Record User Message with potential multimedia metadata
+            user_meta = {}
+            if context:
+                if context.get("image_base64"): user_meta["image_base64"] = context.get("image_base64")
+                if context.get("audio_base64"): user_meta["audio_base64"] = context.get("audio_base64")
+                if context.get("audio_transcript"): user_meta["audio_transcript"] = context.get("audio_transcript")
+                if context.get("file_path"): user_meta["file_path"] = context.get("file_path")
+                if context.get("mime_type"): user_meta["mime_type"] = context.get("mime_type")
+            
+            await self.memory.record_chat_message(chat_id, "user", processed.clean_text, episode_id=episode_id, metadata=user_meta)
+
+            initial_state = {
+                "chat_id": chat_id,
+                "user_message": processed.clean_text,
+                "chat_history": [],
+                "context": ctx,
+                "query_vector": None, # Will be computed in node
+                "thoughts": [],
+                "response": "",
+                "active_task": None,
+                "action_result": None,
+                "phase": "start",
+                "needs_planning": False,
+                "plan": [],
+                "current_step": 0,
+                "task_outputs": [],
+                "logic": "",
+                "associative_context": "",
+                "cycle_complete": False,
+                "is_fast_track": False,
+                "processed": processed,
+                "reply_to": ctx.get("reply_to"),
+                "confidence": 0.0,
+                "mood": "OPTIMISTIC",
+                "energy_level": 1.0,
+                "user_affinity": 0.5,
+                "error": None,
+                "final_decision": None,
+                "initial_decision": None,
+                "decision_history": [],
+                "escalation_level": 0,
+                "episode_id": episode_id,
+                "replan_context": None,
+                "retry_count": 0,
+                "planning_thought": None,
+                "response_vector": None,
+                "speculative_data_context": None,
+                "selected_capabilities": None
+            }
+            
+            # Pre-compute embedding
+            from utils.embeddings import get_embedding_engine
+            engine = get_embedding_engine()
+            initial_state["query_vector"] = await engine.get_embedding(processed.clean_text)
+
+            final_state = initial_state
+            
+            # Track previously emitted thoughts to only send new ones
+            last_thought_count = 0
+            
+            async for event in self.brain.compiled_chat_graph.astream(initial_state):
+                for node_name, state_update in event.items():
+                    final_state.update(state_update)
+                    
+                    # Whenever state is updated, check if we have new thoughts
+                    current_thoughts = final_state.get("thoughts", [])
+                    if len(current_thoughts) > last_thought_count:
+                        new_thoughts = current_thoughts[last_thought_count:]
+                        for t in new_thoughts:
+                            yield {"type": "thought", "content": str(t), "node": node_name}
+                        last_thought_count = len(current_thoughts)
+                    
+                    # Yield specific node events
+                    if node_name == "plan" and final_state.get("plan"):
+                        yield {"type": "plan", "plan": final_state.get("plan")}
+                    
+                    elif node_name == "act":
+                        step = final_state.get("current_step", 0)
+                        total = len(final_state.get("plan", []))
+                        yield {"type": "tool_start", "step": step, "total": total, "task": final_state.get("active_task")}
+                        
+                    elif node_name == "collect":
+                        output = final_state.get("task_outputs", [])[-1] if final_state.get("task_outputs") else None
+                        yield {"type": "tool_end", "output": output}
+                        
+                    elif node_name == "generate":
+                        yield {"type": "generating_response"}
+
+            response = final_state.get("response")
+            
+            self._last_mood = final_state.get("mood", self._last_mood)
+            self._last_energy = final_state.get("energy_level", self._last_energy)
+
+            resp_text = response if isinstance(response, str) else response.get("text", "") if response else ""
+            
+            # Prepare rich result with converted objects for storage/stream
+            def convert_objs(obj):
+                from uuid import UUID
+                if isinstance(obj, list): return [convert_objs(x) for x in obj]
+                if isinstance(obj, dict): return {k: convert_objs(v) for k, v in obj.items()}
+                if isinstance(obj, UUID): return str(obj)
+                if hasattr(obj, "model_dump"): return obj.model_dump()
+                if hasattr(obj, "dict"): return obj.dict()
+                return obj
+
+            rich_result = {
+                "thoughts": final_state.get("thoughts", []),
+                "plan": convert_objs(final_state.get("plan", [])),
+                "tools_used": final_state.get("tools_used", []),
+                "logic": final_state.get("logic", ""),
+                "status": final_state.get("status"),
+                "approval_id": final_state.get("approval_id"),
+                "episode_id": episode_id,
+                "task_outputs": convert_objs(final_state.get("task_outputs", []))
+            }
+
+            if isinstance(response, str):
+                rich_result.update({"text": response, "type": "text"})
+            elif isinstance(response, dict):
+                rich_result.update(response)
+                if "text" not in rich_result and "response" in rich_result:
+                    rich_result["text"] = rich_result["response"]
+            else:
+                rich_result.update({"text": str(response) if response else "", "type": "text"})
+
+            # 6. Final Recording (now with ALL response data)
+            if resp_text:
+                await self.memory.record_chat_message(chat_id, "assistant", resp_text, episode_id=episode_id, metadata=rich_result)
+
+            yield {"type": "final_response", "data": rich_result}
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield {"type": "error", "message": f"I encountered a problem while processing your request: {e}"}
+        finally:
+            from utils.file_handler import cleanup_temp_file
+            if context and context.get("file_path"):
+                cleanup_temp_file(context["file_path"], source="AGENT_STREAM")
 
     async def shutdown(self):
         """Graceful shutdown of all agent components"""
@@ -435,6 +710,12 @@ class BrainAgent:
         
         # 2. Shutdown Brain (closes MCP sessions, etc.)
         await self.brain.shutdown()
+        
+        # 3. Stop Universal Config Watcher
+        if self._universal_config_observer:
+            self._universal_config_observer.stop()
+            self._universal_config_observer.join()
+            logger.info("[AGENT] Universal config watcher stopped.")
         
         logger.info("Brain Agent stopped gracefully")
         

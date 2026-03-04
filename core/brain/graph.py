@@ -11,7 +11,6 @@ from core.identity import AgentIdentity
 from core.brain.state import AgentState, ChatState
 from core.brain.utils import route_chat, should_continue_execution, should_investigate, should_continue
 from utils.file_handler import cleanup_temp_file
-from channels.telegram.channel import get_telegram_channel
 from core.brain.nodes.observe import chat_observe_node, observe_node
 from core.brain.nodes.router import chat_route_node
 from core.brain.nodes.plan import chat_plan_node, chat_prepare_step_node
@@ -91,9 +90,6 @@ class Brain:
         )
         
         self.graph.add_edge("investigate", "decide")
-        self.graph.add_edge("decide", "critic") # Skipped evolve node
-        # self.graph.add_edge("decide", "evolve")
-        # self.graph.add_edge("evolve", "critic")
         self.graph.add_edge("critic", "act")
         self.graph.add_edge("act", "reflect")
         self.graph.add_edge("reflect", "propose_goals")
@@ -296,8 +292,8 @@ class Brain:
                     final_state.update(state_update)
                     
                     # Detect if we need to offload
-                    # NGO: Added check for 'is_test' to allow synchronous testing
-                    if node_name == "plan" and final_state.get("plan") and not final_state.get("is_fast_track") and not final_state.get("context", {}).get("is_test"):
+                    # NGO: Added check for 'is_test' and 'sync_execution' to allow synchronous testing/GUI responses
+                    if node_name == "plan" and final_state.get("plan") and not final_state.get("is_fast_track") and not final_state.get("context", {}).get("is_test") and not final_state.get("context", {}).get("sync_execution"):
                         logger.info(f"[BRAIN] Offloading complex plan execution for {chat_id}")
                         
                         # --- CHANNEL AGNOSTIC NOTIFICATION ---
@@ -434,36 +430,6 @@ class Brain:
                 logger.info(f"[MONITOR] Delivering final response to {chat_id} via {channel_name} (Reply to: {reply_to})")
                 await channel.send(response, recipient=chat_id, reply_to=reply_to)
                 logger.info(f"[MONITOR] Plan execution complete for {chat_id}")
-                
-                # --- INTER-AGENT MESSAGING (Brain 3.0) ---
-                try:
-                    resp_text = ""
-                    if isinstance(response, str):
-                        resp_text = response
-                    elif isinstance(response, dict):
-                        resp_text = response.get("text") or response.get("caption") or ""
-                        
-                    if resp_text:
-                        import re
-                        mentions = set(re.findall(r'@\w+', resp_text))
-                        if mentions:
-                            from config.settings import settings
-                            my_username = getattr(settings, 'bot_username', 'SystemBot')
-                            my_username = f"@{my_username}" if not my_username.startswith('@') else my_username
-                            
-                            from tools.mcp_bridge import get_mcp_bridge
-                            bridge = get_mcp_bridge()
-                            
-                            for m in mentions:
-                                if m.lower() != my_username.lower():
-                                    agent_name = m.lstrip('@').lower()
-                                    await bridge.execute(f"agent:{agent_name}:receive_message", {
-                                        "sender": my_username,
-                                        "message": resp_text,
-                                        "chat_id": str(chat_id)
-                                    })
-                except Exception as e:
-                    logger.error(f"[MONITOR] Inter-Agent message failed in background: {e}")
         except Exception as e:
             logger.error(f"[MONITOR] Background execution failed: {e}")
             await channel.send(f"❌ Niva encountered an issue during execution: {str(e)}", recipient=chat_id)
@@ -496,19 +462,9 @@ async def chat_parallel_startup_node(state: ChatState) -> ChatState:
     from core.brain.nodes.speculator import data_speculator_node
     spec_task = data_speculator_node(state)
     
-    # 3. I/O Prefetch Task (peer bots + identity — previously duplicated 3x each)
+    # 3. I/O Prefetch Task (Identity reconciliation)
     async def prefetch_shared_io(st: ChatState):
         result = {}
-        
-        # Fetch peer bot registrations (was duplicated in router, plan, generate)
-        try:
-            from tools.mcp_bridge import get_mcp_bridge
-            mcp = get_mcp_bridge()
-            peer_bot_map = await mcp.get_peer_registry()
-            result["_cached_peer_bot_map"] = peer_bot_map or {}
-        except Exception as e:
-            logger.debug(f"[PREFETCH] Peer bot fetch failed: {e}")
-            result["_cached_peer_bot_map"] = {}
         
         # Load identity from memory (was duplicated in router, generate)
         try:
@@ -534,10 +490,8 @@ async def chat_parallel_startup_node(state: ChatState) -> ChatState:
     for res_state in results:
         if isinstance(res_state, dict):
             # For prefetch results, store in context to avoid polluting top-level state
-            if "_cached_peer_bot_map" in res_state or "_cached_identity" in res_state:
+            if "_cached_identity" in res_state:
                 ctx = state.get("context", {})
-                if "_cached_peer_bot_map" in res_state:
-                    ctx["peer_bot_map"] = res_state.pop("_cached_peer_bot_map")
                 if "_cached_identity" in res_state:
                     ctx["identity"] = res_state.pop("_cached_identity")
                 state["context"] = ctx

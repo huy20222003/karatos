@@ -18,13 +18,13 @@ def compute_digital_entity_state(affinity_score: float, local_timezone_offset: i
     """
     # 1. Base emotion from affinity
     if affinity_score <= 0.3:
-        base_mood = "Defensive, cold, strictly professional, keep it brief"
+        base_mood = "PROTECTIVE"
         base_energy = 0.5
     elif affinity_score >= 0.7:
-        base_mood = "Warm, enthusiastic, caring, uses emojis freely"
+        base_mood = "OPTIMISTIC"
         base_energy = 1.0
     else:
-        base_mood = "OPTIMISTIC, helpful and polite"
+        base_mood = "NEUTRAL"
         base_energy = 0.8
         
     # 2. Time of day

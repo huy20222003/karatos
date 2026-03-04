@@ -204,6 +204,8 @@ escalation_check: |
   Intent Hint    : {intent_hint}
   Current Response: "{response}"
 
+  Available Skills (compact): {skills_compact}
+
   ─────────────────────────────────────────
   ESCALATION RULES
   ─────────────────────────────────────────

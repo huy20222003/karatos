@@ -180,12 +180,28 @@ def parse_tool_call_robust(tool_calls: any, tool_name: str, base_confidence: flo
         if tool_name == "execute_sql_query" and ("SELECT" in code_content.upper() or "WITH" in code_content.upper()):
             return {"sql_query": code_content}
         
-        # --- AUTO-PLAN WRAPPING ---
         if tool_name == "create_plan":
-            if any(cmd in code_content.lower() for cmd in ["echo", "touch", "mkdir", "rm", "mv", "ls", "dir", "cat"]):
+            # 3a. Handle "create_plan(steps=[...])" format (Hallucinated function call)
+            if code_content.startswith("create_plan") or "steps=[" in code_content:
+                # Try to extract the list inside steps=[...]
+                list_match = re.search(r"steps\s*=\s*(\[.*\])", code_content, re.DOTALL)
+                if list_match:
+                    try:
+                        potential_json = list_match.group(1).replace("'", '"') # Basic fix for single quotes
+                        parsed_list = json.loads(potential_json)
+                        if isinstance(parsed_list, list):
+                            return {"steps": parsed_list}
+                    except:
+                        pass
+
+            # 3b. AUTO-PLAN WRAPPING (with word boundaries)
+            shell_cmds = ["echo", "touch", "mkdir", "rm", "mv", "ls", "dir", "cat", "del", "rd", "md", "type", "cls", "where"]
+            if any(re.search(rf"\b{re.escape(cmd)}\b", code_content.lower()) for cmd in shell_cmds):
                  return {"steps": [{"thought": "Auto-wrapped from raw Shell response", "task": "execute", "params": {"command": code_content}, "confidence": base_confidence}]}
+            
             if "SELECT" in code_content.upper() or "WITH" in code_content.upper() or "INSERT " in code_content.upper():
                 return {"steps": [{"thought": "Auto-wrapped from raw SQL response", "task": "dynamic_db", "params": {"query": code_content}, "confidence": base_confidence}]}
+            
             if "print(" in code_content or "import " in code_content:
                  return {"steps": [{"thought": "Auto-wrapped from raw Python response", "task": "skill_generator", "params": {"skill_name": "adhoc_task", "description": "Auto-generated from planner output", "code": code_content}, "confidence": base_confidence}]}
 

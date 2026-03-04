@@ -157,7 +157,14 @@ async def chat_plan_node(state: ChatState) -> ChatState:
         state["plan"] = plan
         state["current_step"] = 0
         state["task_outputs"] = []
-        state["planning_thought"] = f"Created plan with {len(plan)} steps via Robust Tool Extraction."
+        
+        # Add detailed planning logic to thoughts
+        plan_desc = f"I've designed a {len(plan)}-step mission to fulfill your request."
+        state["thoughts"].append(f"Planner: {plan_desc}")
+        for i, step in enumerate(plan):
+            state["thoughts"].append(f"Step {i+1}: {step.get('thought', 'Process task')}")
+            
+        state["planning_thought"] = plan_desc
         # Clear replan context after planning
         state["replan_context"] = None
         

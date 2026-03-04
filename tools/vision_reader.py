@@ -124,14 +124,14 @@ class VisionReader:
         analysis_prompt = cls._get_mode_prompt(mode, prompt)
         logger.info(f"[VISION] Analyzing image (mode={mode}, prompt_len={len(analysis_prompt)})")
 
-        # 3. Call vision model via provider-agnostic VisionModelProvider
+        # 3. Call vision model via provider-agnostic SharedModelProvider
         try:
-            from core.brain.vision_model import get_vision_model, build_vision_human_message
+            from core.brain.model import SharedModelProvider
 
-            vision_model, cfg = get_vision_model()
+            vision_model, cfg = SharedModelProvider.get_vision_model()
 
             mime_type = kwargs.get("mime_type") or "image/jpeg"
-            message = build_vision_human_message(
+            message = SharedModelProvider.build_vision_human_message(
                 provider=cfg.provider,
                 prompt=analysis_prompt,
                 image_base64=img_b64,

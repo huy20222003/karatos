@@ -106,7 +106,7 @@ class SkillRegistry:
         if not self.skills: return "(No specialized skills available)"
         lines = []
         for name, skill in self.skills.items():
-            try: rel_path = os.path.relpath(skill.file_path, os.path.dirname(os.path.dirname(os.path.dirname(self.skills_root))))
+            try: rel_path = os.path.relpath(skill.file_path, os.path.dirname(os.path.dirname(self.skills_root)))
             except: rel_path = skill.file_path
             lines.append(f"- {skill.name}: {skill.description} (location: {rel_path})")
         return "\n".join(lines)
@@ -121,16 +121,23 @@ class SkillRegistry:
     def get_enriched_capabilities(self) -> str:
         """
         Produce a high-fidelity summary of all capabilities (Skills + Tools).
-        Includes names, descriptions, aliases, and routing examples.
+        Includes names, descriptions, aliases, locations, and routing examples.
         """
+        # Calculate root one level above skills/
+        project_root = os.path.dirname(os.path.dirname(self.skills_root))
+        
         lines = ["### 🟢 SPECIALIZED SKILLS (Reasoning Guidance)"]
         for skill in self.skills.values():
+            try:
+                rel_path = os.path.relpath(skill.file_path, project_root)
+            except:
+                rel_path = skill.file_path
+                
             examples = skill.metadata.get("routing_examples", [])
-            # Format examples nicely
             examples_str = ""
             if examples:
                 examples_str = "\n     - Examples: " + " | ".join(examples[:3])
-            lines.append(f"- **{skill.name}**: {skill.description}{examples_str}")
+            lines.append(f"- **{skill.name}**: {skill.description} (location: {rel_path}){examples_str}")
             
         lines.append("\n### 🛠️ EXECUTABLE TOOLS (Action & Data Execution)")
         tool_schemas = self.tool_registry.list_tools()
@@ -139,7 +146,8 @@ class SkillRegistry:
             alias_str = f" (Aliases: {', '.join(aliases)})" if aliases else ""
             params = t.get("parameters", {}).get("properties", {})
             param_str = f" [Params: {', '.join(params.keys())}]" if params else ""
-            lines.append(f"- **{t['name']}**{alias_str}: {t['description']}{param_str}")
+            location_str = f" (location: {t.get('location', 'dynamic')})"
+            lines.append(f"- **{t['name']}**{alias_str}: {t['description']}{location_str}{param_str}")
             
         return "\n".join(lines)
 

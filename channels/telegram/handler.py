@@ -42,12 +42,19 @@ class TelegramCommandHandler:
         if not message.id:
             return None
             
-        # 0. GROUP TRACKING
+        # 0. GROUP TRACKING & REPLY HANDLING
         chat_type = message.metadata.get("chat_type", "private")
         is_group = chat_type in ["group", "supergroup"]
         bot_username = getattr(self.channel, 'username', None)
         
         content = message.content or ""
+        
+        # If the user replies directly to the bot's message, treat it as an explicit tag
+        is_reply_to_bot = message.metadata.get("is_reply_to_bot", False)
+        if is_reply_to_bot and bot_username and f"@{bot_username}" not in content:
+            logger.info(f"[TELEGRAM] Message is a direct reply to bot. Synthesizing mention.")
+            content = f"@{bot_username} {content}".strip()
+            message.content = content
 
         if is_group:
             logger.info(f"[TELEGRAM] Group Message | Watching: @{bot_username}")
@@ -57,21 +64,6 @@ class TelegramCommandHandler:
             sender_name = message.sender_name or sender_username
             is_sender_bot = message.metadata.get("is_bot", False)
             await self.awareness.observe(sender_username, sender_name, is_sender_bot, message.chat_id, content)
-            
-            # FAST PRE-FILTER: If message @mentions someone else but NOT us → skip immediately
-            # This saves ~15s of LLM processing for obvious "not for me" messages
-            if bot_username:
-                mentions = re.findall(r'@(\w+)', content)
-                if mentions:
-                    # To prevent multiple bots from responding to the same message when one bot is delegating to another,
-                    # we only consider the FIRST mentioned username as the primary recipient.
-                    primary_mention = mentions[0].lower()
-                    my_username = bot_username.lower()
-                    is_for_me = (primary_mention == my_username)
-                    
-                    if not is_for_me:
-                        logger.info(f"[TELEGRAM] Message explicitly for @{primary_mention}, not @{bot_username} (secondary). Skipping.")
-                        return None
 
         # Update message content
         message.content = content
@@ -582,51 +574,28 @@ class TelegramCommandHandler:
             else:
                 mcp_config["args"].append(arg)
                 
-        # Update JSON file
+        # Update Bridge and JSON
         try:
-            from config.settings import settings
-            import json
-            from pathlib import Path
+            from tools.mcp_bridge import get_mcp_bridge
+            bridge = get_mcp_bridge()
             
-            config_path = Path(settings.mcp_config_path)
-            if not config_path.is_absolute():
-                root_dir = Path(__file__).parent.parent.parent.parent
-                config_path = root_dir / settings.mcp_config_path
-                
-            # Load existing
-            data = {}
-            if config_path.exists():
-                try:
-                    with open(config_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                except:
-                    pass
+            success = await bridge.add_server(name, mcp_config)
             
-            if "mcpServers" not in data and "mcp_servers" not in data:
-                data = {"mcpServers": {}}
-            
-            target_key = "mcpServers" if "mcpServers" in data else "mcp_servers"
-            data[target_key][name] = mcp_config
-                
-            # Save back
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4)
-                
-            # Update runtime settings
-            settings.mcp_servers[name] = mcp_config
-            
-            env_note = " (with env vars)" if mcp_config.get("env") else ""
-            display_cmd = f"npx {' '.join(mcp_config['args'])}" if mcp_config["command"] == "npx" and mcp_config.get("args") else mcp_config["command"]
-            
-            return f"✅ MCP Server `{name}` added successfully{env_note}!\n🛠️ Command: `{display_cmd}`"
+            if success:
+                env_note = " (with env vars)" if mcp_config.get("env") else ""
+                display_cmd = f"npx {' '.join(mcp_config['args'])}" if mcp_config["command"] == "npx" and mcp_config.get("args") else mcp_config["command"]
+                return f"✅ MCP Server `{name}` added successfully{env_note}!\n🛠️ Command: `{display_cmd}`"
+            else:
+                return f"❌ Failed to persist MCP Server `{name}`."
         except Exception as e:
             logger.error(f"[TELEGRAM] Failed to add MCP: {e}")
             return f"❌ Error adding MCP: {str(e)}"
 
     async def _cmd_list_mcp(self, args: list, msg: Message) -> str:
         """List all configured MCP servers"""
-        from config.settings import settings
-        servers = settings.mcp_servers
+        from tools.mcp_bridge import get_mcp_bridge
+        bridge = get_mcp_bridge()
+        servers = bridge.get_server_configs()
         
         if not servers:
             return "📭 No MCP Servers configured currently."

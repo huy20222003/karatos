@@ -24,7 +24,6 @@ class DBConnectionFactory:
         if self._initialized:
             return
             
-        self.db_url = settings.database_url
         self._adbc_conn = None
         self._sqlalchemy_engine = None
         self._initialized = True
@@ -35,7 +34,13 @@ class DBConnectionFactory:
         if self._adbc_conn is None:
             try:
                 # ADBC connection for high-performance reads
-                self._adbc_conn = adbc_dbapi.connect(self.db_url)
+                # Ensure we use the latest URL from settings
+                db_url = settings.database_url
+                if not db_url:
+                    logger.error("[DB] database_url is empty in settings!")
+                    raise ValueError("database_url is empty")
+                
+                self._adbc_conn = adbc_dbapi.connect(db_url)
                 logger.info("[DB] ADBC Connection established.")
             except Exception as e:
                 logger.error(f"[DB] Failed to connect ADBC: {e}")
@@ -46,8 +51,13 @@ class DBConnectionFactory:
         """Get or create the shared SQLAlchemy engine."""
         if self._sqlalchemy_engine is None:
             try:
+                db_url = settings.database_url
+                if not db_url:
+                     logger.error("[DB] database_url is empty in settings!")
+                     raise ValueError("database_url is empty")
+                     
                 # Remove pgbouncer params for SQLAlchemy compatibility
-                clean_url = self._clean_url_for_sqlalchemy(self.db_url)
+                clean_url = self._clean_url_for_sqlalchemy(db_url)
                 self._sqlalchemy_engine = create_engine(
                     clean_url,
                     pool_size=10, 

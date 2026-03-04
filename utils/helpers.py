@@ -111,9 +111,35 @@ def safe_json_parse(data: str, default: Any = None) -> Any:
 
 
 def safe_json_dumps(data: Any, indent: int = None) -> str:
-    """Safely serialize object to JSON string"""
+    """Safely serialize object to JSON string, with bytes→base64 support"""
+    import base64
+    from uuid import UUID
+    from datetime import datetime, date
+
+    class SafeEncoder(json.JSONEncoder):
+        def default(self, obj):
+            # Try Pydantic model_dump or dict
+            if hasattr(obj, "model_dump") and callable(obj.model_dump):
+                return obj.model_dump()
+            if hasattr(obj, "dict") and callable(obj.dict):
+                return obj.dict()
+                
+            if isinstance(obj, bytes):
+                b64 = base64.b64encode(obj).decode('utf-8')
+                return f"data:image/png;base64,{b64}"
+            if isinstance(obj, UUID):
+                return str(obj)
+            if isinstance(obj, (datetime, date)):
+                return obj.isoformat()
+            
+            # Fallback to string representation cautiously
+            try:
+                return super().default(obj)
+            except TypeError:
+                return str(obj)
+
     try:
-        return json.dumps(data, indent=indent, default=str, ensure_ascii=False)
+        return json.dumps(data, indent=indent, cls=SafeEncoder, ensure_ascii=False)
     except (TypeError, ValueError):
         return "{}"
 

@@ -98,15 +98,23 @@ async def chat_generate_node(state: ChatState) -> ChatState:
                         else:
                             val = anchor.value if isinstance(anchor.value, str) else str(anchor.value)
                 if core_memories:
-                    user_context += "\n### KNOWLEDGE PULLED FROM DEEP LONG-TERM MEMORY (MULTI-HOP):\n"
+                    user_context += "\n[Relevant Past Context]\n"
                     for anchor in core_memories:
-                        val = anchor.value if isinstance(anchor.value, str) else str(anchor.value)
-                        user_context += f"- [Anchor] {val[:300]}\n"
+                        val = anchor.value
+                        if isinstance(val, dict):
+                            # Format as "Role: Content" if it looks like a message dict
+                            role = val.get("role", "observation").capitalize()
+                            content = val.get("content", str(val))
+                            val = f"{role}: {content}"
+                        else:
+                            val = str(val)
+                            
+                        user_context += f"• {val[:300]}\n"
                         linked_memories = await memory.search(query=val[:100], category=MemoryCategory.CONTEXT, limit=1)
                         for link in linked_memories:
-                            link_val = link.value if isinstance(link.value, str) else str(link.value)
+                            link_val = link.value if isinstance(link.value, str) else str(link_val)
                             if link_val not in user_context:
-                                user_context += f"- [Dijkstra Hop] {link_val[:300]}\n"
+                                user_context += f"  ↳ Linked: {link_val[:200]}\n"
                 prefs = await memory.search(query=f"preferences for {state['chat_id']} {msg}", category=MemoryCategory.USER_PROFILE, limit=2)
                 if prefs:
                     user_context += f"\n### USER PROFILE ({settings.user_pronoun.upper()}):\n"
@@ -142,10 +150,10 @@ async def chat_generate_node(state: ChatState) -> ChatState:
                 # INTUITION context — internal hunches and subconscious insights
                 intuitions = await memory.search(query=msg, category=MemoryCategory.INTUITION, limit=2, min_importance=0.4)
                 if intuitions:
-                    user_context += "\n### INTERNAL INTUITION (HUNCHES):\n"
+                    user_context += "\n[Subconscious Intuition]\n"
                     for i in intuitions:
                         val = i.value if isinstance(i.value, str) else str(i.value)
-                        user_context += f"- {val[:300]}\n"
+                        user_context += f"💡 {val[:300]}\n"
             except Exception as e:
                 logger.debug(f"[NEURAL_GENERATE] Dijkstra-Semantic recall failed: {e}")
 

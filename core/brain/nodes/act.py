@@ -201,10 +201,17 @@ async def chat_act_node(state: ChatState) -> ChatState:
 
                 # 3. Trigger interactive approval buttons
                 from utils.notification import NotificationManager
+                approval_id = NotificationManager._save_pending_command(command_str, language=user_lang)
+                
+                # Update state status for GUI/API to intercept
+                state["status"] = "WAIT_FOR_APPROVAL"
+                state["approval_id"] = approval_id
+
                 await NotificationManager.request_approval(
                     command=command_str, 
                     reason=reason,
-                    language=user_lang
+                    language=user_lang,
+                    channel_name="telegram" # Default for background alerts
                 )
             # --------------------------
 

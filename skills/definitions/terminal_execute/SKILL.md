@@ -53,6 +53,26 @@ Execute precisely. Never run destructive commands without confirmation.
 3. **Capture**: Collect stdout, stderr, and exit code
 4. **Report**: Present results clearly to user
 
+## Path Rules (CRITICAL)
+
+**ALL paths in commands MUST be absolute paths.** Never use relative paths like `./`, `../`, or bare directory names.
+
+| ❌ Wrong | ✅ Correct |
+|----------|-----------|
+| `cat ./config.json` | `cat D:\project\config.json` |
+| `python scripts/test.py` | `python D:\project\scripts\test.py` |
+| `ls ../logs` | `ls D:\project\logs` |
+| `cd src && python main.py` | `python D:\project\src\main.py` |
+
+**Why?** The shell executor runs from a fixed CWD (project root). Relative paths can resolve
+incorrectly and cause hard-to-debug failures. The executor has an automatic path resolver
+as a safety net, but you MUST still generate absolute paths proactively.
+
+**How to determine absolute paths:**
+1. Use context from the user's message, file references, or prior tool results
+2. Combine the known project root with the relative path
+3. When in doubt, run a directory listing first to confirm the path exists
+
 ## Validation Rules
 
 | Rule | Check | Action on Fail |

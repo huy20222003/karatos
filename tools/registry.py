@@ -215,15 +215,6 @@ class ToolRegistry:
                 logger.error(f"[ToolRegistry] Dispatch error for '{clean_action}': {e}")
                 return {"status": "error", "message": f"Tool execution failed: {str(e)}"}
 
-        # ─── 2. AGENT MESSAGING (Direct Agent-to-Agent communication) ───
-        if clean_action.startswith("agent:"):
-            agent_name = clean_action.split(":", 1)[1]
-            bridge = self.get_mcp_bridge()
-            if bridge:
-                logger.info(f"[ToolRegistry] Routing Agent Messaging: {clean_action}")
-                # The bridge handles translating 'agent_name' to a message or RPC call
-                return await bridge.execute(f"agent:{agent_name}:receive_message", clean_params)
-            return {"status": "error", "message": "MCP Bridge not available for Agent Messaging."}
 
         # ─── 3. MCP BRIDGE (for mcp:server:tool format) ───
         if ":" in clean_action:
@@ -310,11 +301,22 @@ class ToolRegistry:
     def list_tools(self) -> List[Dict[str, Any]]:
         """Return tool schemas for the Brain/Planner."""
         schemas = []
+        # Calculate root one level above tools/
+        project_root = os.path.dirname(self.tools_root)
+        
         for name, tool_data in self.tools.items():
             meta = tool_data["meta"]
+            module = tool_data["module"]
             actions = meta.get("actions", [])
             aliases = meta.get("aliases", [])
             
+            # Calculate location relative to project root
+            try:
+                abs_path = getattr(module, "__file__", "")
+                rel_path = os.path.relpath(abs_path, project_root) if abs_path else "dynamic"
+            except:
+                rel_path = "dynamic"
+
             if actions:
                 for action in actions:
                     schemas.append({
@@ -322,6 +324,7 @@ class ToolRegistry:
                         "description": action.get("description", meta.get("description", "")),
                         "parameters": action.get("parameters", action.get("input_schema", {})),
                         "tool_source": name,
+                        "location": rel_path,
                         "aliases": aliases,
                     })
             else:
@@ -329,6 +332,7 @@ class ToolRegistry:
                     "name": name,
                     "description": meta.get("description", ""),
                     "parameters": meta.get("parameters", {}),
+                    "location": rel_path,
                     "aliases": aliases,
                 })
         return schemas
@@ -336,11 +340,21 @@ class ToolRegistry:
     def get_tool_summaries(self) -> str:
         """Return compact name:description pairs for capability scanning."""
         lines = []
+        project_root = os.path.dirname(self.tools_root)
+        
         for name, tool_data in self.tools.items():
             meta = tool_data["meta"]
+            module = tool_data["module"]
             aliases = meta.get("aliases", [])
             alias_str = f" (aliases: {', '.join(aliases)})" if aliases else ""
-            lines.append(f"- {meta.get('name', name)}{alias_str}: {meta.get('description', 'No description')}")
+            
+            try:
+                abs_path = getattr(module, "__file__", "")
+                rel_path = os.path.relpath(abs_path, project_root) if abs_path else "dynamic"
+            except:
+                rel_path = "dynamic"
+                
+            lines.append(f"- {meta.get('name', name)}{alias_str}: {meta.get('description', 'No description')} (location: {rel_path})")
         return "\n".join(lines)
 
     async def get_tool_schemas(self) -> List[Dict[str, Any]]:
@@ -361,31 +375,6 @@ class ToolRegistry:
             except Exception as e:
                 logger.warning(f"[ToolRegistry] Failed to fetch MCP tools: {e}")
             
-            # 2. Dynamic Agent Discovery
-            try:
-                agents = await bridge.get_agent_registry()
-                for agent_name, agent_data in agents.items():
-                    # Skip self
-                    from config.settings import settings
-                    tag = agent_data.get("tag", "")
-                    if tag.lower().lstrip('@') == (settings.bot_username or "").lower().lstrip('@'):
-                        continue
-                        
-                    # Add agent as a high-level tool
-                    schemas.append({
-                        "name": f"agent:{agent_name.lower()}",
-                        "description": f"Directly communicate with {tag} ({agent_name}). Use for planning and coordination.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "message": {"type": "string", "description": "The message or request to send to this agent."}
-                            },
-                            "required": ["message"]
-                        },
-                        "tool_source": "mcp_agent_messaging"
-                    })
-            except Exception as e:
-                logger.debug(f"[ToolRegistry] Failed to fetch agent bots: {e}")
         
         return schemas
 

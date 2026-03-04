@@ -34,13 +34,18 @@ async def chat_escalation_node(state: ChatState) -> ChatState:
         bot_name = identity.active_name if identity and identity.active_name else "Niva"
         
         registry = get_prompt_registry()
+        # Provide available skills so escalation can accurately assess tool coverage
+        from skills.registry import get_skill_registry
+        skills_compact = get_skill_registry().get_enriched_capabilities()[:800]
+        
         # Format the prompt
         prompt = registry.get(
             "system.router.escalation_check",
             msg=msg,
             response=response_text,
             intent_hint=intent_hint,
-            bot_name=bot_name
+            bot_name=bot_name,
+            skills_compact=skills_compact
         )
         
         # Query the critic

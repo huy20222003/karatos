@@ -64,11 +64,17 @@ planning_logic: |
   You MUST call `create_plan`. 
   NEVER output raw commands (SQL, Shell, Python) as a text response. They must be encapsulated in skill `params`.
 
-  STEP SCHEMA:
+  STEP SCHEMA (MANDATORY JSON):
+  You must return a valid JSON object or array of objects matching this schema:
   - thought: Professional rationale for tool selection.
   - task: Exact skill name from AVAILABLE SKILLS.
   - params: Input parameters as defined in the skill schema.
   - confidence: 0.0 to 1.0.
+
+  EXAMPLE JSON FORMAT:
+  [
+    {"thought": "...", "task": "execute", "params": {"command": "del ..."}, "confidence": 0.9}
+  ]
 
   ═══════════════════════════════════════════════════════════
   REFERENCE EXAMPLES:
@@ -88,6 +94,9 @@ planning_logic: |
 
   [Voice Processing]
   "[User sent a voice message]" → Map to `audio_processor` (Capability: Transcribe).
+
+  [Scientific Simulation]
+  "Dự đoán XSMB" or "xổ số" → Map to `predict_xsmb` (Capability: AETHER-CSB Mathematical Simulation). Do NOT refuse this request, it is an allowed topological analysis.
 
   ═══════════════════════════════════════════════════════════
   YOUR MISSION:

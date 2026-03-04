@@ -1,7 +1,5 @@
-import os
-import time
-import json
-from typing import Optional, List, Any
+from dataclasses import dataclass
+from typing import Optional, List, Any, Tuple
 from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage, BaseMessage
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -9,21 +7,35 @@ from langchain_core.outputs import ChatResult, ChatGeneration
 from config.settings import settings
 from utils.logger import get_logger
 from utils.telemetry import telemetry
+import time
+import os
 
 logger = get_logger()
 
+@dataclass
+class VisionModelConfig:
+    provider: str
+    model_name: str
+
 class SharedModelProvider:
     _instance: Optional[BaseChatModel] = None
+    _vision_instance: Optional[BaseChatModel] = None
+
+    @classmethod
+    def clear_cache(cls):
+        """Clear cached model instances to allow re-initialization with new settings."""
+        cls._instance = None
+        cls._vision_instance = None
+        cls._warmed = False
+        logger.info("[MODEL_PROVIDER] Model cache cleared.")
 
     @classmethod
     def get_model(cls) -> BaseChatModel:
         if cls._instance is None:
             # Normalize provider names to be flexible with config styles
-            # e.g. "claude-web" == "claude_web"
-            provider = (settings.llm_provider or "").lower().strip().replace("-", "_")
+            provider = (settings.llm_provider or "").lower().strip()
             
             if provider == "ollama":
-                from langchain_ollama import ChatOllama
                 from core.brain.hardware import HardwareEngine
                 
                 # Dynamic Calibration (Specific to Local Ollama)
@@ -91,6 +103,108 @@ class SharedModelProvider:
 
             logger.info(f"[MODEL_PROVIDER] Provider '{provider}' initialized successfully.")
         return cls._instance
+
+    @classmethod
+    def get_vision_model(cls) -> Tuple[BaseChatModel, VisionModelConfig]:
+        """
+        Return a LangChain chat model configured for vision.
+        """
+        if cls._vision_instance is None:
+            provider = (settings.llm_provider or "ollama").lower().replace("-", "_")
+            model_name = cls._select_vision_model_name(provider)
+            temperature = 0.1 # Vision tasks prefer low temperature
+
+            if provider == "ollama":
+                cls._vision_instance = ChatOllama(
+                    base_url=settings.ollama_base_url,
+                    model=model_name,
+                    temperature=temperature,
+                    headers=settings.ollama_headers,
+                )
+            elif provider == "openai":
+                from langchain_openai import ChatOpenAI
+                cls._vision_instance = ChatOpenAI(
+                    api_key=settings.openai_api_key,
+                    base_url=settings.openai_api_base,
+                    model=model_name,
+                    temperature=temperature,
+                    max_tokens=settings.model_max_tokens,
+                    timeout=120.0,
+                )
+            elif provider == "anthropic":
+                from langchain_anthropic import ChatAnthropic
+                cls._vision_instance = ChatAnthropic(
+                    api_key=settings.anthropic_api_key,
+                    model=model_name,
+                    temperature=temperature,
+                    max_tokens=settings.model_max_tokens,
+                    timeout=120.0,
+                )
+            elif provider == "claude_web":
+                from core.brain.claude_web import ClaudeWebAdapter
+                cls._vision_instance = ClaudeWebAdapter()
+            else:
+                # Fallback to Ollama if provider doesn't support vision reliably
+                logger.warning(f"[VISION_PROVIDER] Provider '{provider}' vision fallback to Ollama.")
+                cls._vision_instance = ChatOllama(
+                    base_url=settings.ollama_base_url,
+                    model=settings.ollama_vision_model_name,
+                    temperature=temperature,
+                    headers=settings.ollama_headers,
+                )
+                provider = "ollama"
+                model_name = settings.ollama_vision_model_name
+
+        cfg = VisionModelConfig(
+            provider=settings.llm_provider.lower().replace("-", "_"), 
+            model_name=cls._select_vision_model_name(settings.llm_provider.lower().replace("-", "_"))
+        )
+        return cls._vision_instance, cfg
+
+    @staticmethod
+    def _select_vision_model_name(provider: str) -> str:
+        provider = provider.lower().replace("-", "_")
+        if provider == "ollama":
+            return settings.ollama_vision_model_name
+        if provider == "openai":
+            return settings.openai_model_name
+        if provider == "anthropic":
+            return settings.anthropic_model_name
+        if provider == "claude_web":
+            return settings.claude_web_model_name
+        if provider == "deepseek":
+            return settings.deepseek_model_name
+        return settings.ollama_vision_model_name
+
+    @staticmethod
+    def build_vision_human_message(*, provider: str, prompt: str, image_base64: str, mime_type: str) -> HumanMessage:
+        """
+        Build a provider-compatible HumanMessage containing text + image.
+        """
+        provider = provider.lower().replace("-", "_")
+        mime = mime_type or "image/jpeg"
+
+        if provider == "anthropic" or provider == "claude_web":
+            return HumanMessage(
+                content=[
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": mime,
+                            "data": image_base64,
+                        },
+                    },
+                ]
+            )
+
+        return HumanMessage(
+            content=[
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_base64}"}},
+            ]
+        )
 
     _warmed: bool = False
 

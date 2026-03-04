@@ -87,11 +87,12 @@ class AgentIdentity:
                 "EXCITED": {"OPTIMISTIC": 0.7, "EXCITED": 0.3}
             },
             "failure": {
-                "OPTIMISTIC": {"WORRIED": 0.7, "PROTECTIVE": 0.3},
-                "RELIEVED": {"WORRIED": 0.8, "PROTECTIVE": 0.2},
-                "WORRIED": {"WORRIED": 0.9, "PROTECTIVE": 0.1},
-                "PROTECTIVE": {"WORRIED": 0.4, "PROTECTIVE": 0.6},
-                "EXCITED": {"WORRIED": 0.8, "PROTECTIVE": 0.2}
+                "OPTIMISTIC": {"WORRIED": 0.6, "PROTECTIVE": 0.3, "ANGRY": 0.1},
+                "RELIEVED": {"WORRIED": 0.7, "PROTECTIVE": 0.2, "ANGRY": 0.1},
+                "WORRIED": {"WORRIED": 0.8, "PROTECTIVE": 0.1, "ANGRY": 0.1},
+                "PROTECTIVE": {"WORRIED": 0.3, "PROTECTIVE": 0.5, "ANGRY": 0.2},
+                "EXCITED": {"WORRIED": 0.7, "PROTECTIVE": 0.2, "ANGRY": 0.1},
+                "ANGRY": {"ANGRY": 0.7, "WORRIED": 0.3}
             }
         }
 
@@ -171,7 +172,11 @@ class AgentIdentity:
     @property
     def safety_constraints(self) -> str:
         from core.brain.prompts.registry import get_prompt_registry
-        return get_prompt_registry().get("system.guardrails.safety_constraints") or ""
+        return get_prompt_registry().get(
+            "system.guardrails.safety_constraints",
+            bot_name=self.active_name or getattr(settings, 'bot_name', 'Brain'),
+            user_pronoun=self.active_user_pronoun or getattr(settings, 'user_pronoun', 'Anh')
+        ) or ""
 
     @property
     def sovereignty_principles(self) -> str:
@@ -201,7 +206,11 @@ class AgentIdentity:
     @property
     def guardrails(self) -> str:
         from core.brain.prompts.registry import get_prompt_registry
-        return get_prompt_registry().get("system.guardrails.safety_constraints") or ""
+        return get_prompt_registry().get(
+            "system.guardrails.safety_constraints",
+            bot_name=self.active_name or getattr(settings, 'bot_name', 'Brain'),
+            user_pronoun=self.active_user_pronoun or getattr(settings, 'user_pronoun', 'Anh')
+        ) or ""
 
     def get_system_prompt(self, phase: str = "full", **kwargs) -> str:
         """
@@ -238,22 +247,22 @@ class AgentIdentity:
         prompt_key = key_map.get(phase, "persona.tasks.full")
         principles_text = "\n".join(f"- {p}" for p in self.principles) if isinstance(self.principles, list) else str(self.principles)
         
+        # Determine current name/pronouns
+        bot_name = self.active_name or getattr(settings, 'bot_name', 'Brain')
+        user_pronoun = self.active_user_pronoun or getattr(settings, 'user_pronoun', 'Anh')
+        bot_pronoun = self.active_bot_pronoun or getattr(settings, 'bot_pronoun', 'Em')
+
         # Prepare dynamic variables
         from skills.registry import get_skill_registry
         skill_registry = get_skill_registry()
         available_skills = skill_registry.generate_skills_prompt()
         
         # Get the skills section block from registry
-        skills_section = registry.get("persona.tasks.skills_section", available_skills=available_skills)
+        skills_section = registry.get("persona.tasks.skills_section", available_skills=available_skills, bot_name=bot_name)
         
         # Inject Dynamic Rules
         from config.rules import AgentRules
         rules_text = AgentRules().get_rules_summary_for_prompt()
-        
-        # Determine current name/pronouns
-        bot_name = self.active_name or getattr(settings, 'bot_name', 'Brain')
-        user_pronoun = self.active_user_pronoun or getattr(settings, 'user_pronoun', 'Anh')
-        bot_pronoun = self.active_bot_pronoun or getattr(settings, 'bot_pronoun', 'Em')
 
         # Merge defaults with provided kwargs
         all_kwargs = {

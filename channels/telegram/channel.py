@@ -233,6 +233,96 @@ class TelegramChannel(Channel):
         if isinstance(content, dict):
             text_to_send = content.get("text", str(content))
 
+        # --- B2B INTERCEPTION: Forward explicit mentions or names via Mailbox ---
+        if str(chat_id).startswith("-"):  # Only for group chats
+            try:
+                import asyncio
+                from tools.registry import get_tool_registry
+                from config.settings import settings
+                
+                async def _drop_to_mailbox(text):
+                    registry = get_tool_registry()
+                    reg_result = await registry.dispatch("mcp:mailbox:get_registrations", {})
+                    if reg_result.get("status") == "success":
+                        import json
+                        raw_data = reg_result.get("data", "{}")
+                        try:
+                            registered_bots = json.loads(raw_data)
+                        except:
+                            registered_bots = raw_data if isinstance(raw_data, dict) else {}
+                        
+                        if not registered_bots and isinstance(reg_result.get("result"), dict):
+                            registered_bots = reg_result.get("result")
+                            
+                        if isinstance(registered_bots, str) and registered_bots.startswith("{"):
+                            try: registered_bots = json.loads(registered_bots)
+                            except: pass
+                        
+                        my_name = settings.bot_name or "Karatos"
+                        my_username = getattr(self, "username", None)
+                        targets = []
+                        
+                        if isinstance(registered_bots, dict):
+                            for n, u in registered_bots.items():
+                                if u and not u.startswith('@'): u = f"@{u}"
+                                if u and u.lower() != (my_username or "").lower():
+                                    targets.append({"match": u.lower(), "target": u, "type": "username"})
+                                    if u.startswith('@'):
+                                        targets.append({"match": u[1:].lower(), "target": u, "type": "username_no_at"})
+                                if n and n.lower() != my_name.lower() and not n.startswith('@'):
+                                    targets.append({"match": n.lower(), "target": u, "type": "name"})
+                        elif isinstance(registered_bots, list):
+                            for b in registered_bots:
+                                u = b.get("username")
+                                n = b.get("name")
+                                if u and not u.startswith('@'): u = f"@{u}"
+                                if u and u.lower() != (my_username or "").lower():
+                                    targets.append({"match": u.lower(), "target": u, "type": "username"})
+                                    if u.startswith('@'):
+                                        targets.append({"match": u[1:].lower(), "target": u, "type": "username_no_at"})
+                                if n and n.lower() != my_name.lower() and not n.startswith('@'):
+                                    targets.append({"match": n.lower(), "target": u or n, "type": "name"})
+                                    
+                        lines = text.split('\n')
+                        for line in lines:
+                            line_lower = line.strip().lower()
+                            matched_target = None
+                            match_len = 0
+                            for t in targets:
+                                search_term = t["match"]
+                                if line_lower.startswith(search_term) or line_lower.startswith(f"@{search_term}"):
+                                    prefix = search_term if line_lower.startswith(search_term) else f"@{search_term}"
+                                    if len(line_lower) == len(prefix) or not line_lower[len(prefix)].isalnum():
+                                        if len(search_term) > match_len:
+                                            matched_target = t["target"]
+                                            match_len = len(prefix)
+                            if matched_target:
+                                bot_message = line.strip()[match_len:].strip()
+                                if bot_message and bot_message[0] in [':', ',', '-']:
+                                    bot_message = bot_message[1:].strip()
+                                
+                                logger.info(f"[TELEGRAM] 📬 Name/Mention detected in outgoing message. Dropping copy to {matched_target} via Mailbox.")
+                                try:
+                                    drop_res = await registry.dispatch("mcp:mailbox:drop_message", {
+                                        "sender": getattr(self, "username", None) or "Karatos",
+                                        "target": matched_target,
+                                        "chat_id": str(chat_id),
+                                        "content": bot_message
+                                    })
+                                    logger.info(f"[TELEGRAM] Mailbox drop result for {matched_target}: {drop_res.get('status')} - {drop_res.get('result') or drop_res.get('message')}")
+                                except Exception as e:
+                                    logger.error(f"[TELEGRAM] Error in drop_message dispatch: {e}")
+                                
+                # Await directly
+                try:
+                    await asyncio.wait_for(_drop_to_mailbox(text_to_send), timeout=10.0)
+                except Exception as e:
+                    logger.error(f"[TELEGRAM] Exception in Mailbox block: {e}")
+                    
+            except Exception as e:
+                logger.error(f"[TELEGRAM] Failed to setup Mailbox interception: {e}")
+        # --- END B2B INTERCEPTION ---
+
         # Normalize LLM markdown (GitHub-style) to Telegram HTML
         if parse_mode == "HTML":
             text_to_send = self.markdown_to_html(text_to_send)
@@ -677,11 +767,9 @@ class TelegramChannel(Channel):
         else:
             logger.error(f"[TELEGRAM] Failed to register commands: {result}")
         
-    async def _download_file(self, file_id: str, file_name: str) -> Optional[str]:
-        """Download a file from Telegram into a temporary directory.
-        Returns local temp path or None. File is auto-cleaned by OS."""
+    async def _download_file(self, file_id: str, local_path: str) -> Optional[str]:
+        """Download a file from Telegram to the specified local path."""
         try:
-            import tempfile
             # 1. Get file path from Telegram
             result = await self._api_call("getFile", {"file_id": file_id})
             if not result.get("ok"):
@@ -691,21 +779,15 @@ class TelegramChannel(Channel):
             tg_file_path = result["result"]["file_path"]
             download_url = f"https://api.telegram.org/file/bot{self.token}/{tg_file_path}"
             
-            # 2. Download to temporary directory (auto-cleaned by OS)
-            # Using suffix to preserve file extension for type detection
+            # 2. Download to specified path
             import os
-            _, ext = os.path.splitext(file_name)
-            tmp_fd, local_path = tempfile.mkstemp(suffix=ext, prefix="niva_tmp_")
-            
             async with self._session.get(download_url) as resp:
                 if resp.status == 200:
-                    with os.fdopen(tmp_fd, "wb") as f:
+                    with open(local_path, "wb") as f:
                         f.write(await resp.read())
-                    logger.info(f"[TELEGRAM] File saved to temp: {local_path} (auto-cleanup)")
+                    logger.info(f"[TELEGRAM] File saved to: {local_path}")
                     return local_path
                 else:
-                    os.close(tmp_fd)
-                    os.unlink(local_path)
                     logger.error(f"[TELEGRAM] File download HTTP {resp.status}")
                     return None
         except Exception as e:
@@ -758,6 +840,16 @@ class TelegramChannel(Channel):
             "chat_type": msg.get("chat", {}).get("type"),
             "thread_id": msg.get("message_thread_id")
         }
+        
+        reply_to_msg_id = None
+        reply_to = msg.get("reply_to_message")
+        if reply_to:
+            reply_to_msg_id = str(reply_to.get("message_id"))
+            replied_sender = reply_to.get("from", {})
+            replied_sender_id = str(replied_sender.get("id"))
+            metadata["is_reply_to_bot"] = (self.bot_id and replied_sender_id == self.bot_id)
+            metadata["replied_to_username"] = replied_sender.get("username")
+            metadata["replied_to_is_bot"] = replied_sender.get("is_bot", False)
         
         # Detect document uploads (DOCX, PDF, etc.)
         doc = msg.get("document")
@@ -818,6 +910,7 @@ class TelegramChannel(Channel):
             sender_id=str(sender.get("id")),
             sender_name=sender.get("first_name", "Unknown"),
             chat_id=str(msg.get("chat", {}).get("id")),
+            reply_to=reply_to_msg_id,
             metadata=metadata
         )
         

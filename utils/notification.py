@@ -170,7 +170,6 @@ class NotificationManager:
         lang_code = NotificationManager._detect_language(language)
         
         if channel_name == "telegram":
-            logger.info(f"[NOTIFICATION] Triggering Telegram approval for command: {command}")
             keyboard = {
                 "inline_keyboard": [[
                     # Use icon-only buttons so text localization is handled by Brain messages.
@@ -234,7 +233,6 @@ class NotificationManager:
                     )
                 
                 # Execute the approved command
-                logger.info(f"[NOTIFICATION] Command approved by user: {command}. Executing with bypass.")
                 await channel.send(
                     await NotificationManager._generate_brain_body(
                         f"The administrator has APPROVED the command: `{command}`. "
