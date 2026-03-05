@@ -52,14 +52,24 @@ Karatos operates on the **OTAR Cognitive Loop**:
 - **Dependencies:** API Keys for configured LLM/Vision/Audio providers (e.g., Anthropic, OpenAI, Local Ollama).
 
 ### Installation
+
+**Automated One-Line Install (Recommended):**
+You can install Karatos instantly using our install script:
+```bash
+curl -sSL https://raw.githubusercontent.com/huy20222003/karatos/master/install.sh | bash
+```
+
+**Manual Installation:**
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-org/karatos.git
+   git clone https://github.com/huy20222003/karatos.git
    cd karatos
    ```
 
 2. Install dependencies:
    ```bash
+   python3 -m venv venv
+   source venv/bin/activate
    pip install -r requirements.txt
    ```
 
