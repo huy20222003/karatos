@@ -11,6 +11,7 @@ const App = {
         credentials: { page: CredentialsPage, title: 'Credentials' },
         chat: { page: ChatPage, title: 'Chat' },
         mcp: { page: McpPage, title: 'MCP Servers' },
+        avatar: { page: AvatarPage, title: 'Agent Avatar' },
     },
 
     init() {

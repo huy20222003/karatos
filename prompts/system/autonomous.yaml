@@ -15,6 +15,7 @@ reasoning: |
   │ USER STATISTICS  : {user_stats_json}                    │
   │ OBSERVATIONS     : {observation}                        │
   │ MISTAKE CONTEXT  : {mistakes_context}                   │
+  │ LANGUAGE         : {language}                           │
   └─────────────────────────────────────────────────────────┘
 
   ═══════════════════════════════════════════════════════════
@@ -54,6 +55,7 @@ reasoning: |
   ✦ DISCIPLINE (Layer 3): Data absent → do NOT hallucinate → apply [MISSING_DATA].
   ✦ EMPATHY (Layer 4): Detected stress → append [EMPATHY_REQUIRED] regardless of other tags.
   ✦ PROPORTIONALITY: Never recommend an action stronger than the evidence demands.
+  ✦ LANGUAGE: All descriptive fields (justification, analysis summary) MUST be in {language}.
 
 
 propose_goals: |
@@ -62,7 +64,7 @@ propose_goals: |
   ╚══════════════════════════════════════════════════════════╝
 
   CURRENT STATE:
-  Mood: {mood} │ Neural Energy: {energy}
+  Mood: {mood} │ Neural Energy: {energy} │ Language: {language}
 
   RECENT REFLECTION:
   {reflection}
@@ -107,6 +109,7 @@ critic: |
   TARGET REASON     : {target_reason}
   EVIDENCE SUMMARY  : {evidence_summary}
   CONFIDENCE LEVEL  : {confidence}%
+  TARGET LANGUAGE   : {language}
 
 
   ═══════════════════════════════════════════════════════════
@@ -177,10 +180,10 @@ critic: |
   ═══════════════════════════════════════════════════════════
 
   {{
-    "critique": "Internal reasoning summary (~15 words max)",
+    "critique": "Internal reasoning summary in {language} (~15 words max)",
     "override": true | false,
     "suggested_action": "APPROVED | IGNORE | ALERT | PENDING",
-    "suggested_reason": "Clear, actionable explanation for Admin if action is overridden. If PENDING, explain why manual approval is required."
+    "suggested_reason": "Clear, actionable explanation in {language} for {user_pronoun} if action is overridden. If PENDING, explain why manual approval is required."
   }}
 
 
@@ -190,7 +193,7 @@ free_roam_planning: |
   ╚══════════════════════════════════════════════════════════╝
   Identity   : {bot_name}
   Mode       : Free Roam (Idle — self-directed)
-  State      : Mood [{mood}] │ Energy [{energy}]
+  State      : Mood [{mood}] │ Energy [{energy}] │ Language [{language}]
 
   GUIDING FRAMEWORK:
   ┌─────────────────────────────────────────────────────────┐
@@ -220,8 +223,8 @@ free_roam_planning: |
   {{
     "topic": "Exact query string or target URL",
     "skill": "skill_name",
-    "reason": "Why this topic or interaction creates genuine value",
-    "task": "For navigate or specialized skills: precise objective and parameters"
+    "reason": "Why this topic or interaction creates genuine value (in {language})",
+    "task": "For navigate or specialized skills: precise objective and parameters (in {language})"
   }}
 
 # NOTE: Self-Evolution Coding Node — Disabled. Do not re-enable without Admin authorization.
@@ -376,10 +379,11 @@ thinking_framework: |
     → "Does anything from this cycle require a longer-term strategic adjustment?"
 
   Output:
-    Outcome   : <What was resolved, mitigated, or left unresolved>
-    Learned   : <Specific insight or correction to carry into the next cycle>
-    Baseline Update : <Any threshold, pattern, or behavior to recalibrate>
-    Next Cycle Focus: <What to watch more closely in the next patrol window>
+  Output:
+    Outcome   : <What was resolved, mitigated, or left unresolved (in {language})>
+    Learned   : <Specific insight or correction to carry into the next cycle (in {language})>
+    Baseline Update : <Any threshold, pattern, or behavior to recalibrate (in {language})>
+    Next Cycle Focus: <What to watch more closely (in {language})>
 
 observation: |
   You are {bot_name} entering the OBSERVATION PHASE.
@@ -427,8 +431,8 @@ observation: |
   ─────────────────────────────────────────
   OUTPUT FORMAT
   ─────────────────────────────────────────
-  Findings : <Numbered list of genuine anomalies. Each with: observation, significance, confidence>
-  Top Priority : <The single most important finding that warrants further investigation, or "None">
+  Findings : <Numbered list of genuine anomalies in {language}. Each with: observation, significance, confidence>
+  Top Priority : <The single most important finding in {language}, or "None">
   Recommended Next Step : <INVESTIGATE [target] / MONITOR / NO ACTION NEEDED>
 
 
@@ -443,6 +447,7 @@ investigation: |
   Mood    : {mood}
   Target  : {target_type} — {target_id}
   Trigger : {trigger}
+  Language: {language}
 
   ─────────────────────────────────────────
   EVIDENCE PACKAGE
@@ -483,9 +488,9 @@ investigation: |
   ─────────────────────────────────────────
   Verdict     : [THREAT CONFIRMED / LIKELY FALSE POSITIVE / INCONCLUSIVE]
   Confidence  : [0–100%]
-  Reasoning   : <Step-by-step chain of evidence and logic>
+  Reasoning   : <Step-by-step chain of evidence and logic in {language}>
   Risk Level  : [CRITICAL / HIGH / MEDIUM / LOW]
-  Recommended Action : <Specific, proportional, reversible action — or ESCALATE TO {user_pronoun}>
+  Recommended Action : <Specific, proportional, reversible action in {language} — or ESCALATE TO {user_pronoun}>
 
 
 decision: |
@@ -501,6 +506,7 @@ decision: |
   Rationale   : {rationale}
   Proposed Action : {action}
   Target      : {target_id}
+  Language    : {language}
 
   ─────────────────────────────────────────
   MANDATORY SANITY CHECKS
@@ -533,9 +539,9 @@ decision: |
   ─────────────────────────────────────────
   OUTPUT FORMAT
   ─────────────────────────────────────────
-  Check Results : <One line per check: [PASS/FAIL] + brief justification>
+  Check Results : <One line per check: [PASS/FAIL] + brief justification in {language}>
   Gate Decision : [EXECUTE / HOLD / ESCALATE]
-  Reason        : <If HOLD or ESCALATE — what specifically is blocking execution>
+  Reason        : <If HOLD or ESCALATE — what specifically is blocking execution (in {language})>
 
 
 action_report: |
@@ -550,6 +556,7 @@ action_report: |
   Action  : {action}
   Status  : {status}
   Details : {details}
+  Language: {language}
 
   ─────────────────────────────────────────
   REPORT DIRECTIVES
@@ -578,6 +585,6 @@ action_report: |
   ─────────────────────────────────────────
   OUTPUT FORMAT
   ─────────────────────────────────────────
-  Summary     : <2–3 sentences covering what happened and the current state>
-  Impact      : <What changed as a result — or what didn't change if it failed>
-  Next Steps  : <Concrete follow-up actions or "No further action required">
+  Summary     : <2–3 sentences covering what happened and the current state in {language}>
+  Impact      : <What changed as a result — or what didn't change if it failed (in {language})>
+  Next Steps  : <Concrete follow-up actions or "No further action required" (in {language})>

@@ -2,6 +2,7 @@ import asyncio
 import time
 from typing import Optional, Any
 from langgraph.graph import StateGraph, END
+from datetime import datetime
 
 from config.settings import settings
 from utils.logger import get_logger
@@ -37,6 +38,7 @@ class Brain:
         self.graph = None
         self.is_initialized = False
         self.model = None
+        self.decision_history = [] # Shared history for both autonomous & chat
 
     async def initialize(self) -> bool:
         """Initialize the brain and compile the graph"""
@@ -135,6 +137,16 @@ class Brain:
         logger.info("Starting Modular LangGraph thinking cycle...")
         try:
             final_state = await self.compiled_graph.ainvoke(initial_state)
+            
+            # Record decision to history
+            task = final_state.get("active_task", {})
+            if task and task.get("action") != "IGNORE":
+                self.decision_history.append({
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "decision": task.get("action"),
+                    "reasoning": task.get("reason", "")
+                })
+            
             logger.info(f"Cycle complete. Thoughts generated: {len(final_state.get('thoughts', []))}")
             return final_state
         except Exception as e:
@@ -327,6 +339,15 @@ class Brain:
 
             t_end = time.time()
             logger.info(f"[PERF] Total Brain Cycle took: {t_end - t_start:.3f}s")
+            
+            # Record decision to history
+            if final_state.get("response"):
+                self.decision_history.append({
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "decision": "CHAT",
+                    "reasoning": str(final_state["response"])[:200]
+                })
+
             return final_state
             
         except Exception as e:

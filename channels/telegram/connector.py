@@ -179,8 +179,8 @@ class TelegramConnector:
             current_time = datetime.now().strftime("%H:%M %A")
             
             from utils.language import language_for_prompt, normalize_language_code
-            lang_cfg = getattr(settings, "user_language", None) or "English"
-            language = language_for_prompt(normalize_language_code(lang_cfg, default="English"), default="English")
+            lang_cfg = settings.user_language  # Auto-detected from OS locale
+            language = language_for_prompt(normalize_language_code(lang_cfg))
             
             prompt = get_prompt_registry().get(
                 "system.social_impulse.social_impulse",
@@ -315,18 +315,21 @@ class TelegramConnector:
 
         # 3. Braing Patrol
         now = datetime.utcnow()
-        last_patrol = getattr(self.agent, "_last_patrol_time", None)
+        last_patrol = getattr(self.agent, "_last_patrol", None)
         
         # Default 10 mins if not set
         interval = settings.scan_interval_minutes
         
         if last_patrol is None or (now - last_patrol).total_seconds() >= (interval * 60):
             logger.info(f"[TelegramConnector] Triggering scheduled patrol (Interval: {interval}m)")
-            self.agent._last_patrol_time = now
             
-            await self.telegram.send("🔍 Starting scheduled patrol...", recipient=self.admin_chat)
+            lang = getattr(settings, "user_language", "English")
+            start_msg = "🔍 Đang bắt đầu chu kỳ tuần tra..." if lang == "Vietnamese" else "🔍 Starting scheduled patrol..."
+            complete_msg = "✅ Đã hoàn tất chu kỳ tuần tra. Các hành động đã được xếp hàng tự động." if lang == "Vietnamese" else "✅ Patrol cycle complete. Actions queued autonomously."
+            
+            await self.telegram.send(start_msg, recipient=self.admin_chat)
             final_state = await self.agent.patrol()
-            await self.telegram.send("✅ Patrol cycle complete. Actions queued autonomously.", recipient=self.admin_chat)
+            await self.telegram.send(complete_msg, recipient=self.admin_chat)
             
             # Proactive Chat
             goals = final_state.get("goals", [])

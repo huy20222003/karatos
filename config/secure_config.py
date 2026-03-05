@@ -32,7 +32,7 @@ MANAGED_FIELDS = {
     # Context
     "user_language", "context_planning_limit", "context_generation_limit",
     # Identity
-    "bot_name", "user_pronoun", "bot_pronoun",
+    "bot_name", "user_pronoun", "bot_pronoun", "avatar_model_url",
     # Telegram
     "telegram_bot_token", "telegram_chat_id", "telegram_polling_timeout",
     # External API Keys

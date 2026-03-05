@@ -327,8 +327,23 @@ async def run_with_gui(port: int = 8080):
     # Start GUI server
     tasks.append(asyncio.create_task(start_server(agent, port)))
 
-    # Optionally start Telegram alongside GUI
-    if settings.telegram_bot_token and settings.telegram_chat_id:
+    # Start Autonomous Patrol Loop if no Telegram driver
+    if not (settings.telegram_bot_token and settings.telegram_chat_id):
+        async def standalone_patrol():
+            logger.info("[MAIN] No communication channel detected. Starting standalone autonomous loop.")
+            while True:
+                try:
+                    await agent.patrol()
+                    # Wait for interval
+                    await asyncio.sleep(settings.scan_interval_minutes * 60)
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.error(f"[MAIN] Standalone patrol error: {e}")
+                    await asyncio.sleep(60)
+
+        tasks.append(asyncio.create_task(standalone_patrol(), name="StandalonePatrolLoop"))
+    else:
         from channels.telegram.connector import TelegramConnector
         connector = TelegramConnector(agent)
         tasks.append(asyncio.create_task(connector.start()))

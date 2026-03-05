@@ -5,6 +5,23 @@ from config.settings import settings
 
 logger = get_logger()
 
+OBSERVE_LANG = {
+    'Vietnamese': {
+        'brute_force': 'phát hiện tấn công brute force',
+        'brute_force_desc': 'Phát hiện {count} lần thử đăng nhập thất bại liên tiếp',
+        'vision_instructions': 'Trả lời bằng ngôn ngữ của người dùng (Ví dụ: Tiếng Việt).'
+    },
+    'English': {
+        'brute_force': 'brute_force',
+        'brute_force_desc': 'Detected {count} failed attempts',
+        'vision_instructions': "Answer in the user's language."
+    }
+}
+
+def get_lang():
+    lang = getattr(settings, "user_language", "English")
+    return OBSERVE_LANG.get(lang, OBSERVE_LANG['English'])
+
 async def observe_node(state: AgentState) -> AgentState:
     """
     OBSERVE: Analyze the incoming audit logs
@@ -34,11 +51,12 @@ async def observe_node(state: AgentState) -> AgentState:
     evidence = []
     
     # Check for rapid failures (Brute Force)
+    lt = get_lang()
     failed_attempts = [l for l in logs if l.get("status") == "failed"]
     if len(failed_attempts) > 5:
         anomalies.append({
-            "type": "brute_force",
-            "description": f"Detected {len(failed_attempts)} failed attempts",
+            "type": lt['brute_force'],
+            "description": lt['brute_force_desc'].format(count=len(failed_attempts)),
             "severity": "high"
         })
         
@@ -95,6 +113,7 @@ async def chat_observe_node(state: ChatState) -> ChatState:
                     "- If the question asks for a specific field (e.g., price, name, title, rating), return that value exactly as shown.\n"
                     "- If the answer is clearly present, quote it exactly in the original language (do NOT translate).\n"
                     "- If the answer is not present in the image, return the phrase: ANSWER_NOT_FOUND.\n\n"
+                    f"INSTRUCTION: {get_lang()['vision_instructions']}\n\n"
                     "OUTPUT FORMAT:\n"
                     "ANSWER: <single short answer or concise summary in the user's language>"
                 ),
@@ -158,6 +177,47 @@ async def chat_observe_node(state: ChatState) -> ChatState:
         if is_fast_track:
              logger.info("[CHAT_OBSERVE] Fast-Track detected. Skipping Deep Recall.")
              return state
+
+        # --- PERCEPTUAL MEMORY: Early Pattern Recognition (Human-like Cognition) ---
+        # Like a human brain instantly recognizing familiar patterns before conscious thought
+        logic_structured = state.get("logic_structured", [])
+        try:
+            from memory.persistent import MemoryCategory
+            
+            # HABIT: "I recognize this user's behavioral pattern"
+            habits = await memory.search(query=msg, category=MemoryCategory.HABIT, limit=1, min_importance=0.4)
+            if habits:
+                habit_nodes = []
+                for h in habits:
+                    val = h.value if isinstance(h.value, str) else str(h.value)
+                    habit_nodes.append({"content": val[:150]})
+                logic_structured.append({
+                    "category": "Pattern Recognition",
+                    "icon": "fas fa-fingerprint",
+                    "nodes": habit_nodes
+                })
+                state["_perceived_habits"] = [h.value for h in habits]
+                logger.info(f"[CHAT_OBSERVE] 🧠 Perceptual Memory: Recognized {len(habits)} behavioral pattern(s)")
+            
+            # USER_PROFILE: "I know who this person is"
+            prefs = await memory.search(query=f"preferences {state['chat_id']} {msg}", category=MemoryCategory.USER_PROFILE, limit=2, min_importance=0.3)
+            if prefs:
+                pref_nodes = []
+                for p in prefs:
+                    val = p.value if isinstance(p.value, str) else str(p.value)
+                    pref_nodes.append({"content": val[:150]})
+                logic_structured.append({
+                    "category": "User Recognition",
+                    "icon": "fas fa-id-badge",
+                    "nodes": pref_nodes
+                })
+                state["_perceived_user_profile"] = [p.value for p in prefs]
+                logger.info(f"[CHAT_OBSERVE] 👤 Perceptual Memory: Loaded {len(prefs)} user preference(s)")
+                
+        except Exception as e:
+            logger.debug(f"[CHAT_OBSERVE] Perceptual memory recall failed: {e}")
+        
+        state["logic_structured"] = logic_structured
 
         # 2. Semantic Recall: Find relevant past memories
         if not msg.strip():

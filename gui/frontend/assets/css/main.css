@@ -283,6 +283,62 @@ body {
     min-height: 100vh;
 }
 
+/* --- Avatar HUD effects --- */
+.avatar-container {
+    position: relative;
+}
+
+.avatar-container::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 400px;
+    height: 400px;
+    background: radial-gradient(circle, rgba(108, 92, 231, 0.05) 0%, transparent 60%);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 1;
+}
+
+.model-controls .btn-micro {
+    background: rgba(108, 92, 231, 0.4);
+    border: 1px solid var(--accent);
+    color: white;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.model-controls .btn-micro:hover {
+    background: var(--accent);
+    box-shadow: 0 0 15px var(--accent-glow);
+    transform: translateY(-2px);
+}
+
+.btn-micro {
+    padding: 4px 8px;
+    font-size: 11px;
+    border-radius: 4px;
+    background: rgba(108, 92, 231, 0.1);
+    border: 1px solid rgba(108, 92, 231, 0.2);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-micro:hover {
+    background: rgba(108, 92, 231, 0.3);
+    border-color: var(--accent);
+}
+
 .topbar {
     height: var(--topbar-height);
     display: flex;
@@ -395,8 +451,8 @@ body {
     bottom: 0;
     left: 0;
     width: 100%;
-    height: 60px;
-    background: linear-gradient(to bottom, transparent, var(--bg-card));
+    height: 80px;
+    background: linear-gradient(to bottom, transparent, rgba(22, 22, 40, 0.8), var(--bg-card));
     pointer-events: none;
     transition: opacity 0.3s;
 }
@@ -411,27 +467,60 @@ body {
     justify-content: center;
     gap: 8px;
     width: 100%;
-    padding: 10px;
+    padding: 14px;
     margin-top: 0;
-    background: rgba(108, 92, 231, 0.05);
+    background: linear-gradient(to bottom, rgba(108, 92, 231, 0.02), rgba(108, 92, 231, 0.08));
     border: none;
     border-top: 1px solid var(--border);
-    color: var(--accent);
-    font-size: 12px;
-    font-weight: 600;
+    border-bottom-left-radius: var(--radius);
+    border-bottom-right-radius: var(--radius);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 1px;
 }
 
 .btn-view-more:hover {
-    background: rgba(108, 92, 231, 0.1);
+    background: rgba(108, 92, 231, 0.15);
     color: var(--accent-light);
+    letter-spacing: 1.5px;
 }
 
 .btn-view-more i {
     transition: transform 0.3s;
+}
+
+/* Micro buttons for small actions */
+.btn-micro {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+.btn-micro:hover {
+    filter: brightness(1.2);
+    transform: translateY(-1px);
+}
+
+.btn-micro:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-micro i {
+    font-size: 10px;
 }
 
 .btn-view-more.active i {
@@ -535,7 +624,7 @@ tr:hover td {
 .btn {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 2px;
     padding: 10px 20px;
     border: none;
     border-radius: var(--radius-sm);
@@ -845,12 +934,265 @@ tr:hover td {
     font-size: 12px;
     font-weight: 500;
     color: var(--text-secondary);
-    min-width: 32px;
+    min-width: 35px;
     text-align: right;
 }
 
 .chat-bubble.user .audio-time {
     color: rgba(255, 255, 255, 0.9);
+}
+
+/* ══════ PREMIUM RECORDING UI ══════ */
+.recording-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--bg-card);
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 0 20px;
+    border-radius: 24px;
+    z-index: 10;
+    animation: fadeIn 0.2s ease;
+}
+
+.recording-timer {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    color: var(--red);
+    font-weight: 600;
+    min-width: 50px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.recording-timer::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    background: var(--red);
+    border-radius: 50%;
+    animation: blink 1s infinite;
+}
+
+.live-waveform {
+    flex: 1;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.live-bar {
+    width: 3px;
+    background: var(--accent);
+    border-radius: 3px;
+    transition: height 0.05s ease;
+    min-height: 4px;
+}
+
+.btn-stop-record {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--red);
+    color: white;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px var(--red-glow);
+    transition: transform 0.2s;
+}
+
+.btn-stop-record:hover {
+    transform: scale(1.1);
+}
+
+@keyframes blink {
+    50% {
+        opacity: 0.3;
+    }
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(5px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ══════ ENHANCED CUSTOM PLAYER ══════ */
+.custom-audio-player {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: rgba(108, 92, 231, 0.08);
+    padding: 8px 16px 8px 10px;
+    border-radius: 30px;
+    margin-top: 10px;
+    width: 300px;
+    border: 1px solid rgba(108, 92, 231, 0.15);
+    backdrop-filter: blur(8px);
+}
+
+.chat-bubble.user .custom-audio-player {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* ══════ STRUCTURED LOGIC UI (Professional Style) ══════ */
+.logic-structured {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 6px;
+}
+
+.logic-category {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+}
+
+.logic-category-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    padding: 4px 0;
+    cursor: default;
+    letter-spacing: 0;
+    text-transform: none;
+    opacity: 1;
+    margin-bottom: 0;
+}
+
+.logic-category-header i {
+    font-size: 11px;
+    color: var(--accent);
+    opacity: 0.7;
+    width: 14px;
+    text-align: center;
+}
+
+.logic-nodes-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding-left: 20px;
+    border-left: 1px solid rgba(108, 92, 231, 0.15);
+    margin-left: 6px;
+    margin-bottom: 4px;
+}
+
+.logic-node {
+    background: transparent;
+    border: none;
+    border-left: none;
+    padding: 2px 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.4;
+    border-radius: 0;
+    transition: none;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.logic-node:hover {
+    background: transparent;
+    color: var(--text-secondary);
+}
+
+.logic-node-content {
+    display: inline;
+    font-size: 12px;
+}
+
+.logic-node-meta {
+    display: none;
+    /* Hide linked meta — too noisy */
+}
+
+.badge-logic {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 600;
+    background: rgba(108, 92, 231, 0.1);
+    color: var(--accent);
+    margin-right: 4px;
+    margin-bottom: 0;
+    vertical-align: middle;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+/* ══════ VOICE-ONLY BUBBLE ══════ */
+.chat-bubble.voice-only {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 4px 0 !important;
+}
+
+/* ══════ TYPING DOTS ANIMATION ══════ */
+.typing-dots {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.typing-dots span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    opacity: 0.4;
+    animation: typingBounce 1.4s infinite ease-in-out;
+}
+
+.typing-dots span:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.typing-dots span:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes typingBounce {
+
+    0%,
+    80%,
+    100% {
+        transform: scale(1);
+        opacity: 0.4;
+    }
+
+    40% {
+        transform: scale(1.3);
+        opacity: 1;
+    }
 }
 
 .thinking-card {
@@ -1446,20 +1788,21 @@ tr:hover td {
 }
 
 .server-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-    gap: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
 }
 
 .server-card {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 20px;
+    padding: 18px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
     transition: all 0.2s ease;
+    overflow: hidden;
 }
 
 .server-card:hover {
@@ -1503,14 +1846,19 @@ tr:hover td {
 
 .server-cmd {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    color: var(--text-secondary);
+    font-size: 11px;
+    color: var(--text-muted);
     background: rgba(0, 0, 0, 0.2);
     padding: 10px 14px;
     border-radius: var(--radius-sm);
-    word-break: break-all;
     border: 1px solid var(--border);
-    line-height: 1.4;
+    line-height: 1.5;
+    word-break: break-all;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
 }
 
 .server-card .btn-remove {
@@ -1524,7 +1872,7 @@ tr:hover td {
 
 .content-split {
     display: grid;
-    grid-template-columns: 1fr 340px;
+    grid-template-columns: 1.5fr 1fr;
     gap: 28px;
     align-items: start;
 }

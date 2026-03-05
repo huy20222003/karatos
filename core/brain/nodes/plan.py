@@ -119,6 +119,67 @@ async def chat_plan_node(state: ChatState) -> ChatState:
     
     my_username = f"@{getattr(settings, 'bot_username', '')}"
 
+    # --- PROCEDURAL & LEARNING MEMORY: Knowledge-Informed Planning ---
+    # Like a human thinking "I know how to do this" before making a plan
+    logic_structured = state.get("logic_structured", [])
+    memory_hint = ""
+    try:
+        from memory.persistent import MemoryCategory
+        plan_memory = state.get("context", {}).get("memory")
+        if plan_memory:
+            # PROCEDURAL: "I know the steps for this kind of task"
+            procedures = await plan_memory.search(query=msg, category=MemoryCategory.PROCEDURAL, limit=2, min_importance=0.4)
+            if procedures:
+                proc_nodes = []
+                for p in procedures:
+                    val = p.value if isinstance(p.value, str) else str(p.value)
+                    proc_nodes.append({"content": val[:250]})
+                    memory_hint += f"\n[KNOWN_PROCEDURE]: {val[:250]}"
+                logic_structured.append({
+                    "category": "Procedural Knowledge",
+                    "icon": "fas fa-cogs",
+                    "nodes": proc_nodes
+                })
+                logger.info(f"[PLANNER] 📋 Procedural Memory: Found {len(procedures)} known procedure(s)")
+
+            # LEARNING: "I learned something useful about this before"
+            learnings = await plan_memory.search(query=msg, category=MemoryCategory.LEARNING, limit=2, min_importance=0.5)
+            if learnings:
+                learn_nodes = []
+                for l in learnings:
+                    val = l.value if isinstance(l.value, str) else str(l.value)
+                    learn_nodes.append({"content": val[:200], "badge": "Learned"})
+                    memory_hint += f"\n[LEARNED_INSIGHT]: {val[:200]}"
+                logic_structured.append({
+                    "category": "Learned Insights",
+                    "icon": "fas fa-graduation-cap",
+                    "nodes": learn_nodes
+                })
+                logger.info(f"[PLANNER] 📚 Learning Memory: Found {len(learnings)} relevant lesson(s)")
+
+            # FACT: "I know these facts that might constrain my plan"
+            facts = await plan_memory.search(query=msg, category=MemoryCategory.FACT, limit=1, min_importance=0.5)
+            if facts:
+                fact_nodes = []
+                for f in facts:
+                    val = f.value if isinstance(f.value, str) else str(f.value)
+                    fact_nodes.append({"content": val[:200]})
+                    memory_hint += f"\n[KNOWN_FACT]: {val[:200]}"
+                logic_structured.append({
+                    "category": "Known Facts",
+                    "icon": "fas fa-database",
+                    "nodes": fact_nodes
+                })
+    except Exception as e:
+        logger.debug(f"[PLANNER] Memory-informed planning failed: {e}")
+    
+    state["logic_structured"] = logic_structured
+
+    # Inject memory hints into the planner prompt
+    replan_ctx = state.get("replan_context") or "None"
+    if memory_hint:
+        replan_ctx = f"{replan_ctx}\n{memory_hint}".strip()
+
     prompt = p_registry.get("system.planner.planning_logic", 
                              msg=msg, 
                              history_str=history_str, 
@@ -129,7 +190,7 @@ async def chat_plan_node(state: ChatState) -> ChatState:
                              my_username=my_username,
                              os_platform=os_platform,
                              energy=f"{state.get('energy_level', 1.0)*100:.0f}%",
-                             replan_context=state.get("replan_context") or "None")
+                             replan_context=replan_ctx)
 
     model = PlannerModel()
     # Use native tool calling for planning

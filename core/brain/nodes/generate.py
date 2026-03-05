@@ -81,6 +81,8 @@ async def chat_generate_node(state: ChatState) -> ChatState:
 
         # --- NEW: Dijkstra-Inspired Multi-Hop Semantic Memory Context ---
         user_context = ""
+        # Inherit logic_structured from earlier pipeline nodes (observe, router, plan)
+        logic_structured = state.get("logic_structured", [])
         memory = state["context"].get("memory")
         if memory:
             try:
@@ -98,31 +100,77 @@ async def chat_generate_node(state: ChatState) -> ChatState:
                         else:
                             val = anchor.value if isinstance(anchor.value, str) else str(anchor.value)
                 if core_memories:
+                    mem_nodes = []
                     user_context += "\n[Relevant Past Context]\n"
                     for anchor in core_memories:
                         val = anchor.value
+                        # Extract clean text from dict values (e.g., chat messages)
                         if isinstance(val, dict):
-                            # Format as "Role: Content" if it looks like a message dict
-                            role = val.get("role", "observation").capitalize()
-                            content = val.get("content", str(val))
-                            val = f"{role}: {content}"
+                            content = val.get("content", "")
+                            if content:
+                                val = content
+                            else:
+                                val = str(val)
                         else:
                             val = str(val)
-                            
-                        user_context += f"• {val[:300]}\n"
-                        linked_memories = await memory.search(query=val[:100], category=MemoryCategory.CONTEXT, limit=1)
-                        for link in linked_memories:
-                            link_val = link.value if isinstance(link.value, str) else str(link_val)
-                            if link_val not in user_context:
-                                user_context += f"  ↳ Linked: {link_val[:200]}\n"
-                prefs = await memory.search(query=f"preferences for {state['chat_id']} {msg}", category=MemoryCategory.USER_PROFILE, limit=2)
-                if prefs:
+                        
+                        # Skip overly short or metadata-like entries
+                        clean_val = val.strip()
+                        if len(clean_val) < 5:
+                            continue
+                        
+                        mem_text = clean_val[:200]
+                        user_context += f"• {mem_text}\n"
+                        node = {"content": mem_text}
+                        
+                        # Only fetch linked memories if the current one is meaningful
+                        if len(clean_val) > 20:
+                            linked_memories = await memory.search(query=clean_val[:100], category=MemoryCategory.CONTEXT, limit=1)
+                            for link in linked_memories:
+                                link_val = link.value
+                                if isinstance(link_val, dict):
+                                    link_val = link_val.get("content", str(link_val))
+                                else:
+                                    link_val = str(link_val)
+                                link_clean = link_val.strip()[:150]
+                                if link_clean and link_clean not in user_context and len(link_clean) > 10:
+                                    user_context += f"  ↳ {link_clean}\n"
+                                    node["meta"] = link_clean
+                        mem_nodes.append(node)
+                    
+                    if mem_nodes:
+                        logic_structured.append({
+                            "category": "Memory Context",
+                            "icon": "fas fa-brain",
+                            "nodes": mem_nodes
+                        })
+
+                # Skip USER_PROFILE if already loaded by observe node
+                if not state.get("_perceived_user_profile"):
+                    prefs = await memory.search(query=f"preferences for {state['chat_id']} {msg}", category=MemoryCategory.USER_PROFILE, limit=2)
+                    if prefs:
+                        pref_nodes = []
+                        user_context += f"\n### USER PROFILE ({settings.user_pronoun.upper()}):\n"
+                        for p in prefs:
+                            val = p.value if isinstance(p.value, str) else str(p.value)
+                            if val not in user_context:
+                                user_context += f"- {val[:150]}\n"
+                                pref_nodes.append({"content": val[:150]})
+                        if pref_nodes:
+                            logic_structured.append({
+                                "category": "User Profile",
+                                "icon": "fas fa-id-badge",
+                                "nodes": pref_nodes
+                            })
+                else:
+                    # Reuse results from observe node for user_context (LLM prompt)
                     user_context += f"\n### USER PROFILE ({settings.user_pronoun.upper()}):\n"
-                    for p in prefs:
-                        val = p.value if isinstance(p.value, str) else str(p.value)
-                        if val not in user_context:
-                            user_context += f"- {val[:150]}\n"
+                    for val in state["_perceived_user_profile"]:
+                        val_str = val if isinstance(val, str) else str(val)
+                        user_context += f"- {val_str[:150]}\n"
                 
+                # Combined Personalization (Goal, Relationship, Belief) — unique to synthesis
+                pers_nodes = []
                 # GOAL context — what the user is working toward
                 goals = await memory.search(query=msg, category=MemoryCategory.GOAL, limit=2, min_importance=0.6)
                 if goals:
@@ -130,6 +178,7 @@ async def chat_generate_node(state: ChatState) -> ChatState:
                     for g in goals:
                         val = g.value if isinstance(g.value, str) else str(g.value)
                         user_context += f"- {val[:150]}\n"
+                        pers_nodes.append({"content": val[:150], "badge": "Goal"})
                 
                 # RELATIONSHIP context — social dynamics
                 rels = await memory.search(query=f"relationship {state['chat_id']}", category=MemoryCategory.RELATIONSHIP, limit=1, min_importance=0.7)
@@ -138,6 +187,7 @@ async def chat_generate_node(state: ChatState) -> ChatState:
                     for r in rels:
                         val = r.value if isinstance(r.value, str) else str(r.value)
                         user_context += f"- {val[:150]}\n"
+                        pers_nodes.append({"content": val[:150], "badge": "Dynamic"})
                 
                 # BELIEF context — guiding principles for decision-making
                 beliefs = await memory.search(query=msg, category=MemoryCategory.BELIEF, limit=2, min_importance=0.8)
@@ -146,14 +196,94 @@ async def chat_generate_node(state: ChatState) -> ChatState:
                     for b in beliefs:
                         val = b.value if isinstance(b.value, str) else str(b.value)
                         user_context += f"- {val[:150]}\n"
+                        pers_nodes.append({"content": val[:150], "badge": "Principle"})
+                
+                if pers_nodes:
+                    logic_structured.append({
+                        "category": "Personalization",
+                        "icon": "fas fa-heart",
+                        "nodes": pers_nodes
+                    })
 
-                # INTUITION context — internal hunches and subconscious insights
+                # INTUITION context — unique to synthesis
                 intuitions = await memory.search(query=msg, category=MemoryCategory.INTUITION, limit=2, min_importance=0.4)
                 if intuitions:
+                    int_nodes = []
                     user_context += "\n[Subconscious Intuition]\n"
                     for i in intuitions:
                         val = i.value if isinstance(i.value, str) else str(i.value)
                         user_context += f"💡 {val[:300]}\n"
+                        int_nodes.append({"content": val[:300]})
+                    if int_nodes:
+                        logic_structured.append({
+                            "category": "Subconscious Intuition",
+                            "icon": "fas fa-lightbulb",
+                            "nodes": int_nodes
+                        })
+
+                # EMOTION context — unique to synthesis (deeper emotional understanding)
+                emotions = await memory.search(query=msg, category=MemoryCategory.EMOTION, limit=1, min_importance=0.5)
+                if emotions:
+                    emo_nodes = []
+                    user_context += "\n### EMOTIONAL CONTEXT:\n"
+                    for em in emotions:
+                        val = em.value if isinstance(em.value, str) else str(em.value)
+                        user_context += f"- {val[:150]}\n"
+                        emo_nodes.append({"content": val[:150]})
+                    if emo_nodes:
+                        logic_structured.append({
+                            "category": "Emotional Context",
+                            "icon": "fas fa-smile",
+                            "nodes": emo_nodes
+                        })
+
+                # REFLECTION context — self-improvement insights
+                reflections = await memory.search(query=msg, category=MemoryCategory.REFLECTION, limit=1, min_importance=0.6)
+                if reflections:
+                    ref_nodes = []
+                    user_context += "\n### SELF-REFLECTION:\n"
+                    for r in reflections:
+                        val = r.value if isinstance(r.value, str) else str(r.value)
+                        user_context += f"- {val[:200]}\n"
+                        ref_nodes.append({"content": val[:200]})
+                    if ref_nodes:
+                        logic_structured.append({
+                            "category": "Self-Reflection",
+                            "icon": "fas fa-mirror",
+                            "nodes": ref_nodes
+                        })
+
+                # SENTIMENT context — ongoing emotional state tracking
+                sentiments = await memory.search(query=f"sentiment {state['chat_id']} {msg}", category=MemoryCategory.SENTIMENT, limit=1, min_importance=0.4)
+                if sentiments:
+                    sent_nodes = []
+                    user_context += "\n### SENTIMENT TRACKING:\n"
+                    for s in sentiments:
+                        val = s.value if isinstance(s.value, str) else str(s.value)
+                        user_context += f"- {val[:150]}\n"
+                        sent_nodes.append({"content": val[:150]})
+                    if sent_nodes:
+                        logic_structured.append({
+                            "category": "Sentiment Tracking",
+                            "icon": "fas fa-chart-line",
+                            "nodes": sent_nodes
+                        })
+
+                # PERSONA context — bot's self-awareness
+                persona = await memory.search(query=msg, category=MemoryCategory.PERSONA, limit=1, min_importance=0.6)
+                if persona:
+                    per_nodes = []
+                    user_context += "\n### SELF-IDENTITY:\n"
+                    for p in persona:
+                        val = p.value if isinstance(p.value, str) else str(p.value)
+                        user_context += f"- {val[:200]}\n"
+                        per_nodes.append({"content": val[:200]})
+                    if per_nodes:
+                        logic_structured.append({
+                            "category": "Self-Identity",
+                            "icon": "fas fa-fingerprint",
+                            "nodes": per_nodes
+                        })
             except Exception as e:
                 logger.debug(f"[NEURAL_GENERATE] Dijkstra-Semantic recall failed: {e}")
 
@@ -161,6 +291,7 @@ async def chat_generate_node(state: ChatState) -> ChatState:
         logic = str(state.get("logic") or "")
         logic = f"{logic}\n{user_context}".strip()
         state["logic"] = logic
+        state["logic_structured"] = logic_structured
         history = state.get("chat_history", [])
         
         associative_context = state.get("associative_context", "None") or "None"

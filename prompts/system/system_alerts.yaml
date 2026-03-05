@@ -48,25 +48,25 @@ protocols:
 # ─────────────────────────────────────────────────────────
 alerts:
   auto_alert_header: |-
-    🚨 **AUTO-ALERT** — NivaSound Autonomous Monitor:
+    🚨 **HỆ THỐNG TỰ TRỊ** — Giám sát NivaSound:
 
   user_suspect: |-
-    🚨 **ATTACK WARNING**
-    Suspicious behavior detected on User `{user_id}`.
-    Reason: {reason}
-    → Recommended action: Review activity log and consider temporary restriction pending investigation.
+    🚨 **CẢNH BÁO TẤN CÔNG**
+    Phát hiện hành vi đáng ngờ từ Người dùng `{user_id}`.
+    Lý do: {reason}
+    → Hành động khuyến nghị: Kiểm tra nhật ký hoạt động và xem xét hạn chế tạm thời trong khi điều tra.
 
   service_outage: |-
-    🔴 **SYSTEM INCIDENT**
-    Service `{service_id}` appears to be DOWN or SEVERELY DEGRADED.
-    → Immediate attention required. Check service health dashboard and escalate if unresolved within 5 minutes.
+    🔴 **SỰ CỐ HỆ THỐNG**
+    Dịch vụ `{service_id}` có vẻ đang BỊ SẬP hoặc SUY GIẢM NGHIÊM TRỌNG.
+    → Cần chú ý ngay lập tức. Kiểm tra bảng điều khiển sức khỏe dịch vụ và báo cáo nếu không được giải quyết trong vòng 5 phút.
 
   generic_anomaly: |-
-    ⚠️ **ANOMALY DETECTED**
-    Target  : `{target_id}`
-    Score   : {score:.2f}
-    Reason  : {reason}
-    → Flagged for review. No automated action taken. Awaiting Admin decision.
+    ⚠️ **PHÁT HIỆN BẤT THƯỜNG**
+    Đối tượng : `{target_id}`
+    Điểm số  : {score:.2f}
+    Lý do    : {reason}
+    → Đã được đánh dấu để xem xét. Không có hành động tự động nào được thực hiện. Đang chờ quyết định từ Admin.
 
 # ─────────────────────────────────────────────────────────
 # APPROVAL PROMPTS — Explanations for pending actions.

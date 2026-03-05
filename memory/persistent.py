@@ -257,11 +257,15 @@ class PersistentMemory:
             except Exception as e: logger.warning(f"Distillation failed: {e}")
 
     async def get_chat_history(self, chat_id: str, limit: int = 15, episode_id: Optional[str] = None) -> List[dict]:
-        """Retrieve recent chat history for a session."""
-        # This is a bit inefficient without index on prefix, but fine for local scale
-        # Better: use SQLite LIKE or specialized method if needed.
-        # For now, list_by_category and filter in memory as it's SQLite.
-        results = self.engine.list_by_category("CONTEXT", limit=limit * 2)
+        """Retrieve recent chat history for a session.
+        
+        Scans CONTEXT category sorted by recency, filtering by chat_id prefix.
+        Uses a wider scan window (5x limit) to handle mixed chat sources
+        (e.g. GUI + Telegram messages sharing the same CONTEXT category).
+        """
+        # Scan more files to account for mixed chat_id sources in the same category
+        scan_limit = max(limit * 5, 100)
+        results = self.engine.list_by_category("CONTEXT", limit=scan_limit)
         history = []
         prefix = f"chat:{chat_id}:"
         for r in results:

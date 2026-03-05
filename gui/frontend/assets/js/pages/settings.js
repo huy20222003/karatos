@@ -24,7 +24,7 @@ const SettingsPage = {
     _renderForm(settings) {
         const groups = {
             'Database': ['database_url'],
-            'Identity': ['bot_name', 'user_pronoun', 'bot_pronoun'],
+            'Identity': ['bot_name', 'user_pronoun', 'bot_pronoun', 'avatar_model_url'],
             'General LLM Settings': ['llm_provider'],
             'Ollama (Local)': ['ollama_base_url', 'ollama_model_name', 'ollama_vision_model_name'],
             'OpenAI': ['openai_model_name', 'openai_api_base'],
@@ -64,7 +64,7 @@ const SettingsPage = {
                     html += `<div class="form-group">
                         <label class="form-label">${label}</label>
                         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-                            <input type="checkbox" class="settings-field" data-field="${field}" ${value ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--accent)">
+                            <input type="checkbox" class="settings-field" data-field="${field}" data-original="${value}" ${value ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--accent)">
                             <span style="font-size:13px;color:var(--text-secondary)">${value ? 'Enabled' : 'Disabled'}</span>
                         </label>
                     </div>`;
@@ -74,7 +74,7 @@ const SettingsPage = {
                     html += `<div class="form-group">
                         <label class="form-label">${label}${isMasked ? ' <i class="fas fa-lock" style="font-size:11px;color:var(--text-muted)"></i>' : ''}</label>
                         <input class="form-input settings-field" type="${inputType}"
-                               data-field="${field}" value="${this._escapeHtml(String(value))}"
+                               data-field="${field}" data-original="${this._escapeHtml(String(value))}" value="${this._escapeHtml(String(value))}"
                                placeholder="${placeholder}" ${inputType === 'number' ? 'step="any"' : ''}>
                     </div>`;
                 }
@@ -98,7 +98,7 @@ const SettingsPage = {
                 html += `<div class="form-group">
                     <label class="form-label">${label}${isMasked ? ' 🔒' : ''}</label>
                     <input class="form-input settings-field" type="${isMasked ? 'password' : 'text'}"
-                           data-field="${field}" value="${this._escapeHtml(String(value))}"
+                           data-field="${field}" data-original="${this._escapeHtml(String(value))}" value="${this._escapeHtml(String(value))}"
                            placeholder="${isMasked ? entry?.value : ''}">
                 </div>`;
             }
@@ -117,6 +117,8 @@ const SettingsPage = {
         const fields = document.querySelectorAll('.settings-field');
         const updates = {};
         let hasError = false;
+        let hasChanges = false;
+
         const rules = {
             'model_temperature': { min: 0, max: 2, name: 'Temperature' },
             'model_max_tokens': { min: 1, name: 'Max Tokens' },
@@ -135,14 +137,31 @@ const SettingsPage = {
             let val = f.type === 'checkbox' ? f.checked :
                 f.type === 'number' ? Number(f.value) : f.value;
 
-            // Apply rule-based validation
+            const originalVal = f.dataset.original;
+
+            // Skip unchanged fields
+            if (f.type === 'checkbox') {
+                if (String(val) === originalVal) return;
+            } else {
+                if (f.value === originalVal) return;
+            }
+
+            // Password fields are only 'changed' if they have a non-empty value
+            if (f.type === 'password' && !f.value) return;
+
+            hasChanges = true;
+
+            // Apply rule-based validation only on changed fields
             const rule = rules[key];
             if (rule) {
-                if (rule.min !== undefined && val < rule.min) {
+                const isEmpty = val === '' || val === null;
+                const numVal = Number(val);
+
+                if (rule.min !== undefined && !isEmpty && numVal < rule.min) {
                     UI.showError(f, `${rule.name} must be at least ${rule.min}`);
                     hasError = true;
                 }
-                if (rule.max !== undefined && val > rule.max) {
+                if (rule.max !== undefined && !isEmpty && numVal > rule.max) {
                     UI.showError(f, `${rule.name} must be at most ${rule.max}`);
                     hasError = true;
                 }
@@ -152,26 +171,62 @@ const SettingsPage = {
                 }
             }
 
-            if (f.type === 'password' && !f.value) return; // skip unchanged secrets
             updates[key] = val;
         });
 
-        if (hasError) return;
+        if (hasError) {
+            showToast('Please fix the highlighted errors before saving.', 'error');
+            return;
+        }
 
         const btn = document.getElementById('save-settings-btn');
+
+        if (!hasChanges) {
+            showToast('No changes to save.');
+            btn.disabled = true;
+            return;
+        }
+
+        // Show loading effect immediately
+        const originalHtml = btn.innerHTML;
         UI.setLoading(btn, true);
+        btn.innerHTML = '<i class="fas fa-circle-notch fa-spin" style="margin-right:4px"></i> Saving...';
 
         try {
             const result = await API.post('/settings', { updates });
             if (result.status === 'success') {
                 showToast(`<i class="fas fa-lock"></i> Saved ${result.updated.length} settings to ${result.storage}`, 'success');
-                btn.disabled = true; // Still keep it disabled because no new changes
+                btn.disabled = true; // Keep disabled because changes are now saved
+                btn.innerHTML = '<i class="fas fa-check" style="margin-right:4px"></i> Saved';
+
+                // Update original values so we don't think they're modified anymore
+                fields.forEach(f => {
+                    const key = f.dataset.field;
+                    if (updates[key] !== undefined) {
+                        if (f.type === 'checkbox') f.dataset.original = String(f.checked);
+                        else f.dataset.original = f.value;
+                    }
+                });
+
+                // Reset button text after 2 seconds
+                setTimeout(() => {
+                    btn.innerHTML = originalHtml;
+                }, 2000);
             } else {
                 showToast(`<i class="fas fa-times-circle"></i> ${result.error || 'Save failed'}`, 'error');
                 btn.disabled = false;
+                btn.innerHTML = originalHtml;
             }
+        } catch (e) {
+            showToast(`<i class="fas fa-times-circle"></i> Error saving settings`, 'error');
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
         } finally {
-            btn.classList.remove('btn-loading');
+            UI.setLoading(btn, false);
+            // Re-apply disabled state if it was successful (setLoading false removes disabled)
+            if (btn.innerHTML.includes('Saved') && !btn.innerHTML.includes('fa-spin')) {
+                btn.disabled = true;
+            }
         }
     },
 

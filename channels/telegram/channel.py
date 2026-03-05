@@ -87,8 +87,11 @@ class TelegramChannel(Channel):
                     self.bot_id = str(bot_info.get('id'))
                     logger.info(f"[TELEGRAM] Connected as @{self.username} ('{first_name}')")
                     from config.settings import settings
-                    settings.bot_name = first_name
-                    # Store username in settings too for easy access
+                    # Only override bot_name if user hasn't set a custom name via Settings UI
+                    default_names = {"Karatos (Brain)", "Karatos", ""}
+                    if settings.bot_name in default_names or not settings.bot_name:
+                        settings.bot_name = first_name
+                    # Always store username for reference
                     settings.bot_username = self.username
                 
                 # Register with global ChannelManager

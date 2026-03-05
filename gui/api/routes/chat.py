@@ -458,11 +458,59 @@ async def get_history():
         return {"messages": []}
 
     try:
-        # Load from persistent memory
-        history = await agent.memory.get_chat_history("gui_session")
+        # Load from persistent memory — use higher limit to avoid missing GUI messages
+        # when Telegram messages dominate the CONTEXT category
+        history = await agent.memory.get_chat_history("gui_session", limit=50)
         return {"messages": history}
     except Exception as e:
         logger.error(f"[API] History error: {e}")
-        pass
 
     return {"messages": []}
+
+
+@router.get("/greeting")
+async def get_greeting():
+    """Generate a brain-powered startup greeting using the agent's language."""
+    from config.settings import settings
+
+    try:
+        from core.brain.model import BrainModel
+        from core.brain.prompts.registry import get_prompt_registry
+        from core.identity import AgentIdentity
+        from utils.language import language_for_prompt, normalize_language_code
+        from core.brain.utils import strip_thinking_tags
+
+        identity = AgentIdentity()
+        from datetime import datetime
+        current_time = datetime.now().strftime("%H:%M %A")
+
+        lang_cfg = settings.user_language
+        language = language_for_prompt(normalize_language_code(lang_cfg))
+
+        prompt = get_prompt_registry().get(
+            "system.social_impulse.social_impulse",
+            bot_name=identity.name,
+            peer=settings.user_pronoun or "Boss",
+            peer_type="My user / my owner",
+            mood="OPTIMISTIC",
+            current_time=current_time,
+            impulse_type="STARTUP_GREETING",
+            source_material="I have just started up on the GUI dashboard and am ready to assist. I want to send a warm, concise greeting. Do NOT include any mentions, tags, or @ symbols. Just speak naturally.",
+            language=language,
+        )
+
+        model = BrainModel(mode="social")
+        response = await model.think(prompt, phase="startup", timeout=30.0)
+
+        if response and response not in ["ERROR_TIMEOUT", "ERROR_FAILED"]:
+            message = strip_thinking_tags(response).strip().strip('"').strip("'")
+            return {"text": message, "language": language}
+
+    except Exception as e:
+        logger.error(f"[API] Greeting generation failed: {e}")
+
+    # Fallback: simple greeting in detected language
+    lang = getattr(settings, "user_language", "English")
+    if "viet" in lang.lower():
+        return {"text": f"Xin chào! {settings.bot_name} đã sẵn sàng phục vụ. ✨", "language": lang}
+    return {"text": f"Hello! {settings.bot_name} is ready to assist. ✨", "language": lang}

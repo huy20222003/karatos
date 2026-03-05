@@ -53,10 +53,10 @@ class BrainAgent:
         
         self._running = False
         self._cycle_count = 0
-        self._last_patrol = None
-        self._last_patrol_time = datetime.utcnow() # Initialize to now to avoid immediate patrol
+        self._last_patrol = None # Set to None to allow immediate first patrol
         self._actions_this_hour = 0
         self._hour_start = datetime.utcnow()
+        self._is_patrolling = False
         
         # Live mood/energy (updated after each brain cycle)
         self._last_mood = "OPTIMISTIC"
@@ -197,21 +197,20 @@ class BrainAgent:
     async def patrol(self) -> dict:
         """
         Execute a patrol cycle.
-        
-        This runs the full 6-node pipeline:
-        OBSERVE -> REASON -> INVESTIGATE -> DECIDE -> ACT -> REFLECT
-        
-        Returns:
-            The final state dict from the brain cycle
         """
-        self._cycle_count += 1
-        self._last_patrol = datetime.utcnow()
-        
-        logger.info("=" * 50)
-        logger.info(f"PATROL CYCLE #{self._cycle_count} - {self._last_patrol.isoformat()} (@{self.bot_username})")
-        logger.info("=" * 50)
-        
+        if self._is_patrolling:
+            logger.warning("[AGENT] Patrol already in progress. Skipping.")
+            return {"status": "busy"}
+
+        self._is_patrolling = True
         try:
+            self._cycle_count += 1
+            self._last_patrol = datetime.utcnow()
+            
+            logger.info("=" * 50)
+            logger.info(f"PATROL CYCLE #{self._cycle_count} - {self._last_patrol.isoformat()} (@{self.bot_username})")
+            logger.info("=" * 50)
+            
             # Fetch audit logs
             audit_logs = self.database.get_audit_logs(
                 hours=settings.rolling_window_hours,
@@ -276,8 +275,8 @@ class BrainAgent:
             self._last_energy = final_state.get("energy_level", self._last_energy)
             
             # Handle decision
-            if final_state.get("decision"):
-                decision = final_state["decision"]
+            if final_state.get("active_task"):
+                decision = final_state["active_task"]
                 action = decision.get("action", "IGNORE")
                 
                 # Check action limits
@@ -322,6 +321,8 @@ class BrainAgent:
         except Exception as e:
             logger.error(f"Patrol cycle failed: {e}")
             return {"error": str(e)}
+        finally:
+            self._is_patrolling = False
             
     async def _build_context(self) -> dict:
         """Build context for the brain pipeline, including persistent memory"""
@@ -498,6 +499,7 @@ class BrainAgent:
                 "plan": final_state.get("plan", []),
                 "tools_used": final_state.get("tools_used", []),
                 "logic": final_state.get("logic", ""),
+                "logic_structured": final_state.get("logic_structured", []),
                 "status": final_state.get("status"),
                 "approval_id": final_state.get("approval_id"),
                 "episode_id": episode_id
@@ -587,6 +589,7 @@ class BrainAgent:
                 "current_step": 0,
                 "task_outputs": [],
                 "logic": "",
+                "logic_structured": [],
                 "associative_context": "",
                 "cycle_complete": False,
                 "is_fast_track": False,
@@ -670,6 +673,7 @@ class BrainAgent:
                 "plan": convert_objs(final_state.get("plan", [])),
                 "tools_used": final_state.get("tools_used", []),
                 "logic": final_state.get("logic", ""),
+                "logic_structured": final_state.get("logic_structured", []),
                 "status": final_state.get("status"),
                 "approval_id": final_state.get("approval_id"),
                 "episode_id": episode_id,

@@ -203,6 +203,50 @@ async def chat_route_node(state: ChatState) -> ChatState:
         tables = spec_ctx.get("tables", [])
         hint = f"HINT: Data intent detected for tables: {tables}"
 
+    # --- EXPERIENTIAL MEMORY: Past Decision Recall (Human-like Decision Making) ---
+    # Like a human thinking "I've dealt with this before..." before deciding
+    logic_structured = state.get("logic_structured", [])
+    exp_hint = ""
+    try:
+        from memory.persistent import MemoryCategory
+        state_memory = state.get("context", {}).get("memory")
+        if state_memory:
+            # EXPERIENCE: "I've handled something similar before"
+            past_exp = await state_memory.search(query=msg, category=MemoryCategory.EXPERIENCE, limit=1, min_importance=0.5)
+            if past_exp:
+                exp_nodes = []
+                for e in past_exp:
+                    val = e.value if isinstance(e.value, str) else str(e.value)
+                    exp_nodes.append({"content": val[:200]})
+                    exp_hint += f" EXPERIENCE: {val[:200]}"
+                logic_structured.append({
+                    "category": "Experience Recall",
+                    "icon": "fas fa-history",
+                    "nodes": exp_nodes
+                })
+                logger.info(f"[ROUTER] 🕰️ Experiential Memory: Found {len(past_exp)} relevant experience(s)")
+
+            # DECISION: "I made a similar choice before"
+            past_dec = await state_memory.search(query=msg, category=MemoryCategory.DECISION, limit=1, min_importance=0.5)
+            if past_dec:
+                dec_nodes = []
+                for d in past_dec:
+                    val = d.value if isinstance(d.value, str) else str(d.value)
+                    dec_nodes.append({"content": val[:200]})
+                    exp_hint += f" PAST_DECISION: {val[:200]}"
+                logic_structured.append({
+                    "category": "Decision Memory",
+                    "icon": "fas fa-gavel",
+                    "nodes": dec_nodes
+                })
+                logger.info(f"[ROUTER] ⚖️ Decision Memory: Found {len(past_dec)} past decision(s)")
+    except Exception as e:
+        logger.debug(f"[ROUTER] Experiential memory recall failed: {e}")
+    
+    state["logic_structured"] = logic_structured
+    if exp_hint:
+        hint = f"{hint} {exp_hint}".strip()
+
     # --- INTUITION (GUT FEELING) LAYER ---
     conf = acr_result.get("confidence", 0.0)
     signals = acr_result.get("signals", {})

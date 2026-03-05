@@ -3,6 +3,7 @@ Dashboard API Routes — Agent overview, memory stats, decisions, tools.
 """
 from fastapi import APIRouter
 from datetime import datetime
+from config.settings import settings
 
 router = APIRouter()
 
@@ -11,7 +12,6 @@ router = APIRouter()
 async def get_overview():
     """Agent overview: identity, status, mood, energy, uptime."""
     from gui.server import get_agent
-    from config.settings import settings
 
     agent = get_agent()
     status = agent.get_status() if agent else {}
@@ -48,11 +48,14 @@ async def get_overview():
             "energy": energy,
             "llm_provider": settings.llm_provider,
             "model": _get_active_model(settings),
+            "language": settings.user_language,
+            "avatar_url": settings.avatar_model_url,
         },
         "status": status,
         "skill_count": skill_count,
         "tool_count": tool_count,
-        "timestamp": datetime.utcnow().isoformat(),
+        "last_patrol": getattr(agent, "_last_patrol", None).isoformat() + "Z" if agent and getattr(agent, "_last_patrol", None) else None,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
     }
 
 
@@ -155,6 +158,38 @@ async def get_tools():
         return {"tools": tool_list, "mcp_servers": mcp_servers}
     except Exception as e:
         return {"tools": [], "mcp_servers": [], "error": str(e)}
+
+
+@router.post("/patrol")
+async def trigger_patrol():
+    """Trigger a manual patrol cycle."""
+    from gui.server import get_agent
+    agent = get_agent()
+    if not agent:
+        return {"status": "error", "message": "Agent not running"}
+    
+    # Run in background to not block UI
+    import asyncio
+    asyncio.create_task(agent.patrol())
+    
+    return {"status": "success", "message": "Patrol started"}
+
+
+@router.get("/patrol/status")
+async def get_patrol_status():
+    """Get the latest patrol status and thoughts."""
+    from gui.server import get_agent
+    agent = get_agent()
+    if not agent:
+        return {"status": "error", "message": "Agent not running"}
+    
+    status = {
+        "last_patrol": agent._last_patrol.isoformat() + "Z" if agent._last_patrol else None,
+        "cycle_count": agent._cycle_count,
+        "interval_minutes": settings.scan_interval_minutes,
+        "thoughts": agent.brain.decision_history[-5:] if hasattr(agent.brain, "decision_history") else []
+    }
+    return status
 
 
 def _get_active_model(settings) -> str:

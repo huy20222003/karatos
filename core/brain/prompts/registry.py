@@ -128,6 +128,7 @@ class PromptRegistry:
             "bot_username": getattr(settings, "bot_username", "bot"),
             "user_pronoun": getattr(settings, "user_pronoun", "Anh"),
             "bot_pronoun": getattr(settings, "bot_pronoun", "Em"),
+            "language": getattr(settings, "user_language", "English"),
             "mood": "OPTIMISTIC",
             "current_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }

@@ -55,6 +55,7 @@ class ChatState(TypedDict):
     current_step: int              # Index of the current task being executed
     task_outputs: list[Any]        # Results from each executed task
     logic: Optional[str]           # High-priority system instructions
+    logic_structured: list[dict]   # Structured reasoning data for professional UI display
     associative_context: Optional[str] # Phase 27: Semantic/Contextual memories
     response: Any                  # Can be str or dict (structured response)
     active_task: Optional[dict]    # Current task/action decision (used during execution)

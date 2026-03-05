@@ -13,6 +13,14 @@ const DashboardPage = {
                 <div class="card"><div class="card-title">Total Tools</div><div class="card-value" id="s-tools">—</div><div class="card-sub">local & mcp</div></div>
                 <div class="card"><div class="card-title">Total Tokens</div><div class="card-value" id="s-tokens">—</div><div class="card-sub" id="s-tokens-rate"></div></div>
                 <div class="card"><div class="card-title">Avg Latency</div><div class="card-value" id="s-latency">—</div><div class="card-sub" id="s-interactions"></div></div>
+                <div class="card" id="patrol-card" style="border: 1px solid rgba(108, 92, 231, 0.3); background: linear-gradient(145deg, rgba(22, 22, 40, 0.7), rgba(15, 15, 25, 0.9))">
+                    <div class="card-title"><i class="fas fa-shield-alt" style="margin-right:6px;color:var(--accent)"></i> <span id="l-patrol-title">Patrol</span></div>
+                    <div class="card-value" id="s-patrol" style="font-size:18px">Idle</div>
+                    <div class="card-sub" id="s-patrol-next">Next Scan: —</div>
+                    <button id="btn-run-patrol" class="btn-micro" style="margin-top:10px; width:100%; font-size:11px; padding:6px">
+                        <i class="fas fa-sync"></i> <span id="l-patrol-btn">Scan Now</span>
+                    </button>
+                </div>
             </div>
 
             <div class="grid-2">
@@ -98,6 +106,71 @@ const DashboardPage = {
         }
 
         this._setupExpanders();
+        this._setupPatrol();
+
+        // Auto-refresh stats every 30s
+        if (this._refreshInterval) clearInterval(this._refreshInterval);
+        this._refreshInterval = setInterval(() => {
+            if (document.getElementById('stat-cards')) {
+                this._refreshAll();
+            } else {
+                clearInterval(this._refreshInterval);
+            }
+        }, 30000);
+    },
+
+    async _refreshAll() {
+        try {
+            const [overview, telemetry, decisions] = await Promise.all([
+                API.get('/dashboard/overview'),
+                API.get('/telemetry/summary'),
+                API.get('/dashboard/decisions'),
+            ]);
+            this._renderOverview(overview);
+            this._renderTelemetry(telemetry);
+            this._renderDecisions(decisions);
+        } catch (e) { }
+    },
+
+    _setupPatrol() {
+        const btn = document.getElementById('btn-run-patrol');
+        if (!btn) return;
+        const btnText = document.getElementById('l-patrol-btn');
+
+        btn.addEventListener('click', async () => {
+            btnText.innerHTML = 'Scanning...';
+            try {
+                const res = await API.post('/dashboard/patrol');
+                if (res.status === 'success') {
+                    showToast('Patrol cycle started successfully.');
+                    // Refresh status after 2 seconds
+                    setTimeout(() => this._refreshPatrolStatus(), 2000);
+                } else {
+                    showToast('Failed to start patrol: ' + res.message, 'error');
+                }
+            } catch (e) {
+                showToast('API Error: ' + e.message, 'error');
+            } finally {
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btnText.innerHTML = 'Scan Now';
+                }, 3000);
+            }
+        });
+    },
+
+    async _refreshPatrolStatus() {
+        try {
+            const data = await API.get('/dashboard/patrol/status');
+            if (data.last_patrol) {
+                const lp = new Date(data.last_patrol);
+                document.getElementById('s-patrol').textContent = `${lp.getHours().toString().padStart(2, '0')}:${lp.getMinutes().toString().padStart(2, '0')}:${lp.getSeconds().toString().padStart(2, '0')}`;
+
+                // Estimate next scan
+                const next = new Date(lp.getTime() + (data.interval_minutes || 15) * 60000);
+                document.getElementById('s-patrol-next').textContent = `Next Scan: ${next.getHours().toString().padStart(2, '0')}:${next.getMinutes().toString().padStart(2, '0')}`;
+            }
+        } catch (e) { }
     },
 
     _setupExpanders() {
@@ -120,6 +193,14 @@ const DashboardPage = {
     _renderOverview(data) {
         if (data.error) return;
         const a = data.agent || {};
+        this._currentLang = a.language || 'English';
+
+        // Update labels
+        const titleEl = document.getElementById('l-patrol-title');
+        const btnText = document.getElementById('l-patrol-btn');
+        if (titleEl) titleEl.textContent = 'Patrol';
+        if (btnText) btnText.textContent = 'Scan Now';
+
         document.getElementById('s-status').innerHTML = '<i class="fas fa-circle" style="color:#00d4a1;font-size:10px;margin-right:6px"></i> Online';
         document.getElementById('s-provider').textContent = `Provider: ${a.llm_provider || '—'}`;
         document.getElementById('s-model').textContent = a.model || '—';
@@ -127,6 +208,20 @@ const DashboardPage = {
         document.getElementById('s-energy').textContent = `Energy: ${((a.energy || 0) * 100).toFixed(0)}%`;
         document.getElementById('s-skills').textContent = data.skill_count || 0;
         document.getElementById('s-tools').textContent = data.tool_count || 0;
+
+        if (data.last_patrol) {
+            const lp = new Date(data.last_patrol);
+            document.getElementById('s-patrol').textContent = `${lp.getHours().toString().padStart(2, '0')}:${lp.getMinutes().toString().padStart(2, '0')}:${lp.getSeconds().toString().padStart(2, '0')}`;
+            // If it's very recent (last 1 min), show Active
+            const diff = (new Date() - lp) / 1000;
+            if (diff < 60) {
+                document.getElementById('s-patrol').innerHTML = '<span class="status-dot online"></span> Active';
+            }
+
+            // Next scan estimate is roughly interval_minutes away from last_patrol
+            // We'll just trigger a refresh to get full status
+            this._refreshPatrolStatus();
+        }
     },
 
     _renderTelemetry(data) {

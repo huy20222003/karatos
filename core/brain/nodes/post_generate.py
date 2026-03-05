@@ -141,6 +141,66 @@ async def chat_post_generate_node(state: ChatState) -> ChatState:
         
         state["mood"] = identity.current_mood
         state["energy_level"] = identity.energy
+
+        # --- METACOGNITIVE MEMORY: Learning from this interaction ---
+        # Like a human reflecting "what did I learn?" after a conversation
+        logic_structured = state.get("logic_structured", [])
+        try:
+            from memory.persistent import MemoryCategory
+            meta_memory = state.get("context", {}).get("memory")
+            chat_id = state.get("chat_id", "unknown")
+            user_msg = state.get("user_message", "")
+            
+            if meta_memory:
+                reflect_nodes = []
+                
+                # REFLECTION: Record lesson when self-correction happened
+                if was_corrected:
+                    from datetime import datetime
+                    lesson = f"Self-corrected response to '{user_msg[:80]}'. Original had issues that needed fixing."
+                    await meta_memory.remember(
+                        f"reflection:{chat_id}:{datetime.utcnow().timestamp()}",
+                        lesson,
+                        category=MemoryCategory.REFLECTION,
+                        importance=0.6
+                    )
+                    reflect_nodes.append({"content": "Learned from self-correction: response quality improved", "badge": "Reflection"})
+                    logger.info("[POST_GENERATE] 🪞 Metacognition: Stored self-correction reflection")
+                
+                # SENTIMENT: Track emotional state over time
+                from datetime import datetime
+                sentiment_entry = f"Mood: {identity.current_mood}, Energy: {identity.energy:.0%}, Outcome: {outcome}"
+                await meta_memory.remember(
+                    f"sentiment:{chat_id}:{datetime.utcnow().timestamp()}",
+                    sentiment_entry,
+                    category=MemoryCategory.SENTIMENT,
+                    importance=0.3,
+                    expires_in_days=7
+                )
+                reflect_nodes.append({"content": sentiment_entry, "badge": "Sentiment"})
+                
+                # EXPERIENCE: Record successful interactions as positive experiences
+                if was_correct and not has_error and len(user_msg) > 10:
+                    exp_summary = f"Successfully handled: '{user_msg[:100]}' via {'planning' if state.get('plan') else 'direct chat'}"
+                    await meta_memory.remember(
+                        f"exp:{chat_id}:{datetime.utcnow().timestamp()}",
+                        exp_summary,
+                        category=MemoryCategory.EXPERIENCE,
+                        importance=0.4,
+                        expires_in_days=30
+                    )
+                    reflect_nodes.append({"content": exp_summary[:150], "badge": "Experience"})
+                
+                if reflect_nodes:
+                    logic_structured.append({
+                        "category": "Metacognition",
+                        "icon": "fas fa-brain",
+                        "nodes": reflect_nodes
+                    })
+                    state["logic_structured"] = logic_structured
+                    
+        except Exception as e:
+            logger.debug(f"[POST_GENERATE] Metacognitive memory update failed: {e}")
         
         logger.info(
             f"[POST_GENERATE] Cycle complete | "

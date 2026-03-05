@@ -1,6 +1,12 @@
 from datetime import datetime
 from typing import List, Optional
+import os
 import numpy as np
+
+# Suppress HuggingFace Hub warnings on startup
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 from sentence_transformers import SentenceTransformer
 from config.settings import settings
 from utils.logger import get_logger
@@ -10,7 +16,7 @@ logger = get_logger()
 class EmbeddingEngine:
     """
     Pure library-based Embedding Engine using sentence-transformers.
-    No longer depends on external providers or APIs.
+    Model weights are cached on disk (~/.cache/huggingface/) and loaded from there.
     """
     
     _instance = None
@@ -28,11 +34,23 @@ class EmbeddingEngine:
             cls._instance.model_name = getattr(settings, "memory_embedding_model", "sentence-transformers/all-MiniLM-L6-v2")
             
             try:
-                logger.debug(f"[EMBEDDING] Loading Local Model: {cls._instance.model_name}...")
-                cls._model = SentenceTransformer(cls._instance.model_name)
-                logger.info(f"[EMBEDDING] Library initialized successfully using {cls._instance.model_name}")
+                import time
+                t0 = time.time()
+                # Try loading from local cache first (no network call, faster)
+                try:
+                    cls._model = SentenceTransformer(
+                        cls._instance.model_name,
+                        local_files_only=True,
+                        show_progress_bar=False
+                    )
+                except Exception:
+                    # Not cached yet — download once
+                    logger.info(f"[EMBEDDING] First-time download: {cls._instance.model_name}...")
+                    cls._model = SentenceTransformer(cls._instance.model_name)
+                elapsed = time.time() - t0
+                logger.info(f"[EMBEDDING] Model ready ({elapsed:.1f}s) — {cls._instance.model_name}")
             except Exception as e:
-                logger.error(f"[EMBEDDING] Failed to load library/model: {e}")
+                logger.error(f"[EMBEDDING] Failed to load model: {e}")
                 cls._model = None
         return cls._instance
 

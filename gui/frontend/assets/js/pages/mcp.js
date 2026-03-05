@@ -90,7 +90,8 @@ const McpPage = {
         listEl.innerHTML = '';
         servers.forEach(srv => {
             const card = document.createElement('div');
-            card.className = `server-card`;
+            card.className = 'server-card';
+            const fullCmd = `${srv.command} ${srv.args.join(' ')}`.trim();
             card.innerHTML = `
                 <div class="server-header">
                     <div class="server-title">
@@ -100,7 +101,7 @@ const McpPage = {
                     </div>
                     <button class="btn btn-sm btn-ghost btn-remove" data-name="${srv.name}" title="Remove Server"><i class="fas fa-trash"></i></button>
                 </div>
-                <div class="server-cmd">${srv.command} ${srv.args.join(' ')}</div>
+                <div class="server-cmd" title="${fullCmd}">${fullCmd}</div>
             `;
 
             card.querySelector('.btn-remove').addEventListener('click', (e) => this._handleRemove(srv.name, e.currentTarget));

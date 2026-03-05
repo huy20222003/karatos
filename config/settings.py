@@ -218,8 +218,8 @@ class Settings(BaseSettings):
     )
     # --- Context Limits (Phase 21.5) ---
     user_language: str = Field(
-        default="English",
-        description="The detected primary language of the user",
+        default_factory=lambda: Settings._detect_system_language(),
+        description="The detected primary language of the user (auto-detected from system locale)",
         alias="USER_LANGUAGE"
     )
     context_planning_limit: int = Field(
@@ -339,9 +339,42 @@ class Settings(BaseSettings):
     # Dynamic Identity (Runtime)
     bot_name: str = "Karatos (Brain)"
     bot_username: Optional[str] = None
+    avatar_model_url: str = Field(
+        default="https://modelviewer.dev/shared-assets/models/RobotExpressive.glb",
+        description="URL to the .glb model for the 3D avatar",
+        alias="AVATAR_MODEL_URL"
+    )
     user_pronoun: str = "Boss"
     bot_pronoun: str = "I"
     
+    @staticmethod
+    def _detect_system_language() -> str:
+        """Auto-detect the system's default language from OS locale.
+        Works for ALL languages without hardcoding — extracts the native
+        language name directly from the OS (e.g. 'Vietnamese', 'English', 'Japanese').
+        """
+        try:
+            import locale
+            # setlocale + getlocale on Windows returns full names like 'Vietnamese_Vietnam'
+            try:
+                locale.setlocale(locale.LC_ALL, '')
+                lc = locale.getlocale()[0]
+                if lc:
+                    # 'Vietnamese_Vietnam' → 'Vietnamese', 'en_US' → 'en'
+                    return lc.split('_')[0]
+            except Exception:
+                pass
+            # Fallback for older Python / other OS
+            try:
+                lc = locale.getdefaultlocale()[0]
+                if lc:
+                    return lc.split('_')[0]
+            except Exception:
+                pass
+        except Exception:
+            pass
+        return 'English'
+
     @property
     def telegram_admin_chat_id(self) -> Optional[str]:
         """Alias for telegram_chat_id for clearer naming"""

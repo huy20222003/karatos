@@ -8,12 +8,23 @@ const ChatPage = {
                 <div class="chat-messages" id="chat-messages">
                     <!-- History and messages loaded here -->
                 </div>
-                <div class="chat-input-bar">
+                <div class="chat-input-bar" style="position: relative;">
                     <button class="btn btn-icon" id="chat-attach-btn" title="Attach Image" style="padding: 0 8px; font-size: 16px; background: none; border: none; cursor: pointer; color: var(--text-secondary);"><i class="fas fa-paperclip"></i></button>
                     <button class="btn btn-icon" id="chat-voice-btn" title="Record Voice" style="padding: 0 8px; font-size: 16px; background: none; border: none; cursor: pointer; color: var(--text-secondary);"><i class="fas fa-microphone"></i></button>
                     <input type="file" id="chat-file-input" accept="image/*,audio/*,.pdf,.docx,.doc,.pptx,.xlsx,.xls,.csv,.ipynb,.txt,.md,.json,.jsonc,.json5,.yaml,.yml,.log,.py,.js,.mjs,.ts,.tsx,.jsx,.html,.css,.scss,.sass,.go,.rs,.cpp,.c,.h,.hpp,.java,.kt,.kts,.swift,.rb,.php,.lua,.dart,.sql,.sh,.bash,.bat,.ps1,.env,.ini,.toml,.conf,.xml,.props,.properties,.gitignore,.dockerfile" style="display:none">
                     <input type="text" id="chat-input" placeholder="Type your message..." autocomplete="off">
                     <button class="btn btn-primary" id="chat-send-btn">Send <i class="fas fa-paper-plane" style="margin-left:4px;"></i></button>
+                    
+                    <!-- Recording Overlay -->
+                    <div id="recording-overlay" class="recording-overlay" style="display:none;">
+                        <div class="recording-timer" id="recording-timer">0:00</div>
+                        <div class="live-waveform" id="live-waveform" style="flex:1; display:flex; align-items:center; gap:3px;">
+                            <!-- Bars will be injected here -->
+                        </div>
+                        <button class="btn-stop-record" id="stop-record-btn">
+                            <i class="fas fa-stop"></i>
+                        </button>
+                    </div>
                 </div>
                 <!-- Media preview area -->
                 <div id="chat-media-preview" style="display:none; padding: 10px; border-top: 1px solid var(--border); background: var(--bg-hover); align-items: center; justify-content: space-between;">
@@ -32,6 +43,11 @@ const ChatPage = {
         const mediaContent = document.getElementById('media-content');
         const clearMediaBtn = document.getElementById('chat-clear-media');
 
+        const recordingOverlay = document.getElementById('recording-overlay');
+        const recordingTimer = document.getElementById('recording-timer');
+        const stopRecordBtn = document.getElementById('stop-record-btn');
+        const liveWaveform = document.getElementById('live-waveform');
+
         let currentImageB64 = null;
         let currentMimeType = null;
         let currentAudioB64 = null;
@@ -41,6 +57,14 @@ const ChatPage = {
         let mediaRecorder = null;
         let audioChunks = [];
         let isRecording = false;
+
+        // Recording Visuals
+        let audioContext = null;
+        let analyser = null;
+        let dataArray = null;
+        let animationId = null;
+        let recordStartTime = null;
+        let timerInterval = null;
 
         const clearMedia = () => {
             currentImageB64 = null;
@@ -67,7 +91,7 @@ const ChatPage = {
                     mediaContent.innerHTML = `<img src="${ev.target.result}" style="max-height:80px; border-radius: 4px; border: 1px solid var(--border);">`;
                 } else if (file.type.startsWith('audio/')) {
                     currentAudioB64 = b64;
-                    mediaContent.innerHTML = `<audio controls src="${ev.target.result}" style="height:40px;"></audio>`;
+                    ChatPage._renderAudioPreview(ev.target.result);
                 } else {
                     // Document file
                     currentFileB64 = b64;
@@ -84,18 +108,49 @@ const ChatPage = {
             fileInput.value = '';
         });
 
-        voiceBtn.addEventListener('click', async () => {
-            if (isRecording) {
-                mediaRecorder.stop();
-                isRecording = false;
-                voiceBtn.innerHTML = '<i class="fas fa-microphone"></i>';
-                voiceBtn.style.color = 'var(--text-secondary)';
-                return;
-            }
+        const startRecording = async () => {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(stream);
                 audioChunks = [];
+
+                // Set up Visualizer
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 64;
+                source.connect(analyser);
+
+                const bufferLength = analyser.frequencyBinCount;
+                dataArray = new Uint8Array(bufferLength);
+
+                // Create bars
+                liveWaveform.innerHTML = '';
+                for (let i = 0; i < bufferLength; i++) {
+                    const bar = document.createElement('div');
+                    bar.className = 'live-bar';
+                    liveWaveform.appendChild(bar);
+                }
+
+                const draw = () => {
+                    animationId = requestAnimationFrame(draw);
+                    analyser.getByteFrequencyData(dataArray);
+                    const bars = liveWaveform.querySelectorAll('.live-bar');
+                    bars.forEach((bar, i) => {
+                        const val = dataArray[i];
+                        const height = Math.max(4, (val / 255) * 30);
+                        bar.style.height = height + 'px';
+                    });
+                };
+                draw();
+
+                // Timer
+                recordStartTime = Date.now();
+                timerInterval = setInterval(() => {
+                    const diff = Math.floor((Date.now() - recordStartTime) / 1000);
+                    recordingTimer.textContent = ChatPage._formatTime(diff);
+                }, 500);
+
                 mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
                 mediaRecorder.onstop = () => {
                     const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
@@ -104,18 +159,33 @@ const ChatPage = {
                         const b64 = ev.target.result.split(',')[1];
                         currentAudioB64 = b64;
                         currentMimeType = 'audio/webm';
-                        mediaContent.innerHTML = `<audio controls src="${ev.target.result}" style="height:40px;"></audio>`;
+                        ChatPage._renderAudioPreview(ev.target.result);
                         mediaPreview.style.display = 'flex';
                     };
                     reader.readAsDataURL(audioBlob);
                     stream.getTracks().forEach(t => t.stop());
+
+                    // Cleanup visuals
+                    cancelAnimationFrame(animationId);
+                    clearInterval(timerInterval);
+                    if (audioContext) audioContext.close();
+                    recordingOverlay.style.display = 'none';
                 };
+
                 mediaRecorder.start();
                 isRecording = true;
-                voiceBtn.innerHTML = '<i class="fas fa-stop"></i>';
-                voiceBtn.style.color = 'var(--red)';
+                recordingOverlay.style.display = 'flex';
+                recordingTimer.textContent = '0:00';
             } catch (err) {
                 console.error("Microphone access denied:", err);
+            }
+        };
+
+        voiceBtn.addEventListener('click', startRecording);
+        stopRecordBtn.addEventListener('click', () => {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                isRecording = false;
             }
         });
 
@@ -143,6 +213,36 @@ const ChatPage = {
         input.focus();
     },
 
+    _renderAudioPreview(audioSrc) {
+        const mediaContent = document.getElementById('media-content');
+        if (!mediaContent) return;
+
+        const audioId = `preview-audio-${Date.now()}`;
+
+        // Visual bars for preview
+        let waveformHtml = '';
+        for (let i = 0; i < 25; i++) {
+            const height = Math.random() * 80 + 20;
+            waveformHtml += `<div class="waveform-bar" style="height: ${height}%;"></div>`;
+        }
+
+        mediaContent.innerHTML = `
+            <div class="custom-audio-player" style="margin-top:0; width: 240px;">
+                <button class="audio-play-btn" onclick="ChatPage.toggleAudio('${audioId}')" style="width:28px; height:28px; font-size:10px;">
+                    <i class="fas fa-play audio-icon" id="icon-${audioId}" style="margin-left: 2px;"></i>
+                </button>
+                <div class="audio-waveform" id="waveform-${audioId}" style="height:18px;">
+                    ${waveformHtml}
+                </div>
+                <div class="audio-time" id="time-${audioId}" style="font-size:11px;">...</div>
+                <audio id="${audioId}" src="${audioSrc}" preload="metadata"
+                       ontimeupdate="ChatPage.updateAudioProgress('${audioId}')"
+                       onloadedmetadata="ChatPage.setAudioDuration('${audioId}')"
+                       onended="ChatPage.audioEnded('${audioId}')" style="display:none;"></audio>
+            </div>
+        `;
+    },
+
     async init() {
         await this._loadHistory();
     },
@@ -158,19 +258,40 @@ const ChatPage = {
                 data.messages.forEach(msg => {
                     const role = (msg.role === 'human' || msg.role === 'user') ? 'user' : 'agent';
                     const content = msg.content || msg.message || '';
-                    if (content) {
+                    const hasMedia = msg.metadata && (msg.metadata.audio_base64 || msg.metadata.audio_url || msg.metadata.image_base64 || msg.metadata.image_url || msg.metadata.photo);
+                    if (content || hasMedia) {
                         const metaStr = (msg.metadata && msg.metadata.decision) ? `Final Decision: ${msg.metadata.decision}` : '';
                         this._addBubble(content, role, metaStr, msg.metadata);
                     }
                 });
             } else {
-                // If no history, show greeting
-                messagesContainer.innerHTML = `
-                    <div class="chat-bubble agent">
-                        <div>👋 Hello! I'm ready to chat. Type a message below to begin.</div>
-                        <div class="bubble-meta">System</div>
-                    </div>
-                `;
+                // No history — fetch a brain-generated startup greeting
+                messagesContainer.innerHTML = '';
+                try {
+                    const overview = await API.get('/dashboard/overview');
+                    const botName = (overview && overview.agent) ? overview.agent.name : 'Agent';
+                    // Show typing indicator while greeting loads
+                    messagesContainer.innerHTML = `
+                        <div class="chat-bubble agent" style="max-width:300px;">
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <div class="typing-dots"><span></span><span></span><span></span></div>
+                                <span style="color:var(--text-muted);font-size:13px;">${botName} is waking up...</span>
+                            </div>
+                        </div>
+                    `;
+                    // Dedicated greeting endpoint — no history pollution
+                    const greeting = await API.get('/chat/greeting');
+                    messagesContainer.innerHTML = '';
+                    if (greeting && greeting.text) {
+                        this._addBubble(greeting.text, 'agent');
+                    } else {
+                        this._addBubble(`👋 ${botName} is ready.`, 'agent');
+                    }
+                } catch (e2) {
+                    console.error('Greeting failed:', e2);
+                    messagesContainer.innerHTML = '';
+                    this._addBubble('👋 Hello! Ready to chat.', 'agent');
+                }
             }
         } catch (e) {
             console.error("Failed to load history:", e);
@@ -182,11 +303,23 @@ const ChatPage = {
         const bubble = document.createElement('div');
         bubble.className = `chat-bubble ${type}`;
 
-        // If text is present (including transcript from voice), render it.
-        // We no longer hide text for voice messages as it's now the primary content.
+        // Hide text for user voice messages — show only audio player
+        const hasAudio = rawMeta && (rawMeta.audio_base64 || rawMeta.audio_url);
+        const isUserVoice = (type === 'user') && hasAudio;
 
-        const renderedText = isRawHtml ? text : this._renderMarkdown(text);
-        let innerHTML = `<div>${renderedText}</div>`;
+        // Voice-only bubble: transparent background
+        if (isUserVoice) {
+            bubble.classList.add('voice-only');
+        }
+
+        let innerHTML = '';
+        if (isUserVoice) {
+            // User voice message: NEVER show text (transcript is just metadata)
+            innerHTML = '';
+        } else {
+            const renderedText = isRawHtml ? text : this._renderMarkdown(text);
+            innerHTML = `<div>${renderedText}</div>`;
+        }
 
         // Render document file attachment badge
         if (rawMeta && rawMeta.file_name) {
@@ -403,8 +536,32 @@ const ChatPage = {
             contentHtml += `</div></div>`;
         }
 
-        if (meta.logic) {
-            contentHtml += `<div class="think-section"><span class="think-label">Agent Logic</span><div style="font-style:italic;">${this._escapeHtml(meta.logic)}</div></div>`;
+        if (meta.logic_structured && meta.logic_structured.length > 0) {
+            contentHtml += `<div class="think-section"><span class="think-label">Agent Reasoning</span><div class="logic-structured">`;
+            meta.logic_structured.forEach(group => {
+                const icon = group.icon || 'fas fa-cog';
+                const catName = this._escapeHtml(group.category || 'Context');
+                const nodes = group.nodes || [];
+                if (nodes.length === 0) return;
+
+                contentHtml += `<div class="logic-category">`;
+                contentHtml += `<div class="logic-category-header"><i class="${icon}"></i> ${catName}</div>`;
+                contentHtml += `<div class="logic-nodes-list">`;
+                nodes.forEach(node => {
+                    let content = node.content || '';
+                    // Clean raw dict serializations
+                    if (content.includes("{'role':") || content.includes('{"role":')) {
+                        const match = content.match(/['"]content['"]\s*:\s*['"]([^'"]+)/);
+                        content = match ? match[1] : '';
+                    }
+                    if (!content || content.length < 5) return;
+
+                    const badge = node.badge ? `<span class="badge-logic">${this._escapeHtml(node.badge)}</span>` : '';
+                    contentHtml += `<div class="logic-node">${badge}<span class="logic-node-content">${this._escapeHtml(content.substring(0, 150))}</span></div>`;
+                });
+                contentHtml += `</div></div>`;
+            });
+            contentHtml += `</div></div>`;
         }
 
         if (!contentHtml) return '';

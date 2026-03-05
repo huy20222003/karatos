@@ -15,6 +15,51 @@ logger = get_logger()
 
 from core.brain.model import SharedModelProvider
 
+AUTONOMOUS_LANG = {
+    'Vietnamese': {
+        'no_obs': 'Không có quan sát nào',
+        'prev_mistakes': '\nSAI LẦM TRƯỚC ĐÓ (Không lặp lại các trường hợp nhận diện sai này):\n',
+        'mistake_reason': '- Người dùng đã bị chặn vì: {reason}\n',
+        'ai_result': 'Kết quả phân tích AI: {analysis}',
+        'suspect_reason': 'AI xác định là đối tượng tình nghi dựa trên phân tích mẫu hành vi',
+        'outage_reason': 'AI xác định {service_name} có khả năng đang bị gián đoạn hoặc quá tải.',
+        'investigation_complete': 'Cuộc điều tra chi tiết đã hoàn tất cho {target_id}. Tìm thấy {count} tài khoản liên kết.',
+        'idle_curiosity': 'Kích hoạt trí tò mò khi rảnh rỗi. Kế hoạch: {skill} về "{topic}"',
+        'fallback_reason': 'Khám phá dự phòng (do trí tò mò thúc đẩy)',
+        'rule_reason': '[QUY_TẮC_CHUYÊN_NGHIỆP] {reason}',
+        'threshold_reason': 'Dưới ngưỡng hành động hoặc là hoạt động định kỳ',
+        'success_execute': 'Đã thực hiện thành công {action} trên {target_id}',
+        'no_action': 'Không thực hiện hành động nào',
+        'threat_logic': 'Logic Mối đe dọa',
+        'anomaly_type': 'Loại bất thường',
+        'user_recognition': 'Nhận diện Người dùng',
+        'pattern_recognition': 'Nhận diện Mẫu hành vi'
+    },
+    'English': {
+        'no_obs': 'No observations',
+        'prev_mistakes': '\nPREVIOUS MISTAKES (Do not repeat these false positives):\n',
+        'mistake_reason': '- User was banned for: {reason}\n',
+        'ai_result': 'AI Analysis Result: {analysis}',
+        'suspect_reason': 'AI identified as suspect based on pattern analysis',
+        'outage_reason': 'AI identified {service_name} as potentially experiencing an outage or degradation.',
+        'investigation_complete': 'Deep investigation complete for {target_id}. Found {count} linked accounts.',
+        'idle_curiosity': 'Idle Curiosity Triggered. Plan: {skill} on "{topic}"',
+        'fallback_reason': 'Fallback exploration (driven by curiosity)',
+        'rule_reason': '[PROFESSIONAL_RULE] {reason}',
+        'threshold_reason': 'Below action threshold or routine activity',
+        'success_execute': 'Successfully executed {action} on {target_id}',
+        'no_action': 'No action taken',
+        'threat_logic': 'Threat Logic',
+        'anomaly_type': 'Anomaly Type',
+        'user_recognition': 'User Recognition',
+        'pattern_recognition': 'Pattern Recognition'
+    }
+}
+
+def get_lang():
+    lang = getattr(settings, "user_language", "English")
+    return AUTONOMOUS_LANG.get(lang, AUTONOMOUS_LANG['English'])
+
 class ReasonerModel:
     _instance = None
     
@@ -66,7 +111,8 @@ async def reason_node(state: AgentState) -> AgentState:
             logger.debug(f"Could not fetch learning memories: {e}")
 
     # Prepare data for AI
-    observation = state["thoughts"][-1] if state["thoughts"] else "No observations"
+    lt = get_lang()
+    observation = state["thoughts"][-1] if state["thoughts"] else lt['no_obs']
     user_stats = state['context'].get('user_activity', {})
     serialized_stats = {str(k): v for k, v in user_stats.items()}
     
@@ -120,7 +166,7 @@ async def reason_node(state: AgentState) -> AgentState:
     logger.info(f"--- AI ANALYSIS RESULT ---\n{analysis}\n--- END ANALYSIS ---")
     
     state["analysis"] = analysis
-    state["thoughts"].append(f"AI Analysis Result: {analysis[:150]}...")
+    state["thoughts"].append(lt['ai_result'].format(analysis=analysis[:150]) + "...")
     
     anomalies = []
     # AI-based anomaly mapping (Smarter version using tags)
@@ -139,7 +185,7 @@ async def reason_node(state: AgentState) -> AgentState:
             "type": "user",
             "id": user_id,
             "trigger": "AI_ALERT",
-            "reason": "AI identified as suspect based on pattern analysis",
+            "reason": lt['suspect_reason'],
             "severity": "medium", # Default to medium, AI decider will refine
             "score": 0.95
         })
@@ -149,7 +195,7 @@ async def reason_node(state: AgentState) -> AgentState:
             "type": "SERVICE",
             "id": service_name,
             "trigger": "OUTAGE_DETECTED",
-            "reason": f"AI identified {service_name} as potentially experiencing an outage or degradation.",
+            "reason": lt['outage_reason'].format(service_name=service_name),
             "severity": "high",
             "score": 1.0
         })
@@ -202,7 +248,8 @@ async def investigate_node(state: AgentState) -> AgentState:
         evidence["risk_factors"].append("MULTI_ACCOUNT_DETECTED")
     
     state["evidence"].append(evidence)
-    state["thoughts"].append(f"Deep investigation complete for {target['id']}. Found {len(associations)} linked accounts.")
+    lt = get_lang()
+    state["thoughts"].append(lt['investigation_complete'].format(target_id=target['id'], count=len(associations)))
     
     state["phase"] = "investigate_complete"
     state["investigation_complete"] = True
@@ -274,7 +321,8 @@ async def decide_node(state: AgentState) -> AgentState:
                         "confidence": 100,
                         "params": params
                     }
-                    state["thoughts"].append(f"Idle Curiosity Triggered. Plan: {skill_type} on '{plan.get('topic')}'")
+                    lt = get_lang()
+                    state["thoughts"].append(lt['idle_curiosity'].format(skill=skill_type, topic=plan.get('topic')))
                     state["phase"] = "decide_complete"
                     return state
             except Exception as e:
@@ -300,6 +348,7 @@ async def decide_node(state: AgentState) -> AgentState:
     decision = await _compute_threat_decision(target, state["context"], memory)
     
     state["active_task"] = decision
+    lt = get_lang()
     state["thoughts"].append(f"Decision: {decision['action']} (Conf: {decision.get('confidence', 0)}%)")
     logger.decision(f"Action: {decision['action']} on {target['id']}")
     
@@ -345,7 +394,8 @@ async def _compute_threat_decision(target: dict, context: dict, memory) -> dict:
     
     # BELOW THRESHOLD: Ignore and slightly decay risk
     if memory: await memory.update_user_risk_score(target["id"], -0.05)
-    return {"action": "IGNORE", "target_id": target["id"], "reason": "Below action threshold or routine activity"}
+    lt = get_lang()
+    return {"action": "IGNORE", "target_id": target["id"], "reason": lt['threshold_reason']}
 
 
 async def act_node(state: AgentState) -> AgentState:
@@ -353,7 +403,8 @@ async def act_node(state: AgentState) -> AgentState:
     action = decision.get("action", decision.get("task", decision.get("skill", "IGNORE")))
     
     if action == "IGNORE":
-        state["action_result"] = {"success": True, "action": "IGNORE", "message": "No action taken"}
+        lt = get_lang()
+        state["action_result"] = {"success": True, "action": "IGNORE", "message": lt['no_action']}
         state["phase"] = "act_complete"
         return state
     
@@ -396,7 +447,7 @@ async def act_node(state: AgentState) -> AgentState:
                     importance=0.5
                 )
 
-        state["action_result"] = {
+            state["action_result"] = {
             "success": True,
             "action": action,
             "target_id": target_id,
@@ -404,7 +455,8 @@ async def act_node(state: AgentState) -> AgentState:
             "result": result,
             "executed_at": datetime.utcnow().isoformat()
         }
-        state["thoughts"].append(f"Successfully executed {action} on {target_id}")
+        lt = get_lang()
+        state["thoughts"].append(lt['success_execute'].format(action=action, target_id=target_id))
 
     except Exception as e:
         logger.error(f"Execution failed: {e}")
